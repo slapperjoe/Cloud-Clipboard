@@ -22,7 +22,7 @@ public sealed class NotificationsFunctions
 
     [Function("PollClipboardNotifications")]
     public async Task<HttpResponseData> PollClipboardNotificationsAsync(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "clipboard/{ownerId}/notifications")] HttpRequestData req,
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "clipboard/owners/{ownerId}/notifications")] HttpRequestData req,
         string ownerId,
         CancellationToken cancellationToken)
     {
@@ -65,7 +65,7 @@ public sealed class NotificationsFunctions
 
     [Function("NegotiateClipboardNotifications")]
     public async Task<HttpResponseData> NegotiateClipboardNotificationsAsync(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "clipboard/{ownerId}/notifications/negotiate")] HttpRequestData req,
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "clipboard/owners/{ownerId}/notifications/negotiate")] HttpRequestData req,
         string ownerId,
         CancellationToken cancellationToken)
     {

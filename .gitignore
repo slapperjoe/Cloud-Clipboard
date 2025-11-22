@@ -2,3 +2,5 @@ func-host.log
 /publish/*
 /src/**/bin/
 /src/**/obj/
+src/Functions/CloudClipboard.Functions/functions_publish/*
+artifacts/*

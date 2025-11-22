@@ -26,6 +26,7 @@ var host = new HostBuilder()
         services.AddSingleton<ClipboardCoordinator>();
         services.AddSingleton<IClipboardNotificationService, TableClipboardNotificationService>();
         services.AddSingleton<IRealtimeClipboardNotificationService, WebPubSubNotificationService>();
+        services.AddSingleton<IOwnerConfigurationStore, TableOwnerConfigurationStore>();
     })
     .Build();
 

@@ -8,4 +8,5 @@ public sealed class StorageOptions
     public string MetadataTable { get; set; } = "ClipboardItems";
     public string OwnerStateTable { get; set; } = "ClipboardOwnerState";
     public string NotificationsTable { get; set; } = "ClipboardNotifications";
+    public string OwnerConfigurationTable { get; set; } = "ClipboardOwnerConfigurations";
 }

@@ -46,8 +46,9 @@ public sealed class TableClipboardNotificationService : IClipboardNotificationSe
     {
         // Drain removes notifications after reading so the agent does not see duplicates when long-polling.
         await EnsureTableAsync(cancellationToken).ConfigureAwait(false);
-            var filter = TableClient.CreateQueryFilter($"PartitionKey eq {ownerId}");
-            var query = _tableClient.QueryAsync<NotificationEntity>(filter, cancellationToken: cancellationToken);
+        var query = _tableClient.QueryAsync<NotificationEntity>(
+            TableClient.CreateQueryFilter<NotificationEntity>(entity => entity.PartitionKey == ownerId),
+            cancellationToken: cancellationToken);
         var items = new List<NotificationEntity>();
         await foreach (var entity in query.ConfigureAwait(false))
         {

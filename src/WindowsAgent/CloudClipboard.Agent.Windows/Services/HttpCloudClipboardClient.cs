@@ -122,7 +122,7 @@ public sealed class HttpCloudClipboardClient : ICloudClipboardClient, IDisposabl
     public async Task<IReadOnlyList<ClipboardNotificationEvent>> PollNotificationsAsync(string ownerId, int timeoutSeconds, CancellationToken cancellationToken = default)
     {
         // The Functions endpoint blocks up to timeoutSeconds, letting us approximate server push without WebSockets.
-        using var request = CreateRequest(HttpMethod.Get, $"clipboard/{Escape(ownerId)}/notifications?timeoutSeconds={timeoutSeconds}");
+        using var request = CreateRequest(HttpMethod.Get, $"clipboard/owners/{Escape(ownerId)}/notifications?timeoutSeconds={timeoutSeconds}");
         var response = await _httpClient.SendAsync(request, cancellationToken);
         if (response.StatusCode == HttpStatusCode.BadRequest)
         {
@@ -136,7 +136,7 @@ public sealed class HttpCloudClipboardClient : ICloudClipboardClient, IDisposabl
 
     public async Task<NotificationConnectionInfo?> GetNotificationConnectionAsync(string ownerId, CancellationToken cancellationToken = default)
     {
-        using var request = CreateRequest(HttpMethod.Get, $"clipboard/{Escape(ownerId)}/notifications/negotiate");
+        using var request = CreateRequest(HttpMethod.Get, $"clipboard/owners/{Escape(ownerId)}/notifications/negotiate");
         var response = await _httpClient.SendAsync(request, cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {

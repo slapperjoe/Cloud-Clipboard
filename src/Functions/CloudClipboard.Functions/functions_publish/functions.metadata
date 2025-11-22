@@ -178,7 +178,7 @@
         "methods": [
           "get"
         ],
-        "route": "clipboard/{ownerId}/notifications",
+        "route": "clipboard/owners/{ownerId}/notifications",
         "properties": {}
       },
       {
@@ -205,7 +205,61 @@
         "methods": [
           "get"
         ],
-        "route": "clipboard/{ownerId}/notifications/negotiate",
+        "route": "clipboard/owners/{ownerId}/notifications/negotiate",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetOwnerConfiguration",
+    "scriptFile": "CloudClipboard.Functions.dll",
+    "entryPoint": "CloudClipboard.Functions.Functions.OwnerConfigurationFunctions.GetAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "get"
+        ],
+        "route": "clipboard/owners/{ownerId}/configuration",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "SetOwnerConfiguration",
+    "scriptFile": "CloudClipboard.Functions.dll",
+    "entryPoint": "CloudClipboard.Functions.Functions.OwnerConfigurationFunctions.SetAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "route": "clipboard/owners/{ownerId}/configuration",
         "properties": {}
       },
       {
