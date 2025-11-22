@@ -1,7 +1,7 @@
 func-host.log
-/publish/*
-/src/**/bin/
-/src/**/obj/
+publish/*
+src/**/bin/
+src/**/obj/
 src/Functions/CloudClipboard.Functions/functions_publish/*
 artifacts/*
 src/Functions/CloudClipboard.Functions/local.settings.json

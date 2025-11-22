@@ -13,7 +13,7 @@
   },
   "Notifications": {
     "PubSub": {
-      "ConnectionString": "Endpoint=https://cloudclipboardpubsub.webpubsub.azure.com;AccessKey=LQhlPGNGnj3q1sKFsdr61f5dLFxE33MeOIhxvG26CUsiS8n164G5JQQJ99BKAC3pKaRXJ3w3AAAAAWPShY9o;Version=1.0;",
+      "ConnectionString": "",
       "Hub": "cloudclipboardhub",
       "OwnerGroupPrefix": "owner",
       "TokenTtlMinutes": 60
