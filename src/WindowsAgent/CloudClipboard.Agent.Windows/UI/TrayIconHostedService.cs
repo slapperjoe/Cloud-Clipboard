@@ -32,6 +32,9 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
     private readonly IClipboardUploadQueue _uploadQueue;
     private readonly IPinnedClipboardStore _pinnedStore;
     private readonly IAgentDiagnostics _diagnostics;
+    private readonly IHostApplicationLifetime _appLifetime;
+    private readonly IFunctionsDeploymentService _deploymentService;
+    private readonly CancellationTokenRegistration _applicationStoppedRegistration;
     private NotifyIcon? _notifyIcon;
     private SynchronizationContext? _uiContext;
     private readonly TaskCompletionSource<bool> _uiReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -47,10 +50,13 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
     private GlobalHotKeyRegistration? _manualDownloadHotKey;
     private DiagnosticsForm? _diagnosticsForm;
     private SettingsForm? _settingsForm;
+    private DeployFunctionsForm? _deployForm;
     private IDisposable? _optionsSubscription;
     private Icon? _scissorsIcon;
     private IntPtr _scissorsIconHandle;
     private bool _stateInitialized;
+    private int _shutdownRequested;
+    private int _processExitRequested;
     private static int _hotKeyCounter;
 
     public TrayIconHostedService(
@@ -64,7 +70,9 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         IManualUploadStore manualUploadStore,
         IClipboardUploadQueue uploadQueue,
         IPinnedClipboardStore pinnedStore,
-        IAgentDiagnostics diagnostics)
+        IAgentDiagnostics diagnostics,
+        IHostApplicationLifetime appLifetime,
+        IFunctionsDeploymentService deploymentService)
     {
         _historyCache = historyCache;
         _pasteService = pasteService;
@@ -77,6 +85,9 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         _uploadQueue = uploadQueue;
         _pinnedStore = pinnedStore;
         _diagnostics = diagnostics;
+        _appLifetime = appLifetime;
+        _deploymentService = deploymentService;
+        _applicationStoppedRegistration = _appLifetime.ApplicationStopped.Register(OnHostStopped);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -228,9 +239,11 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         var wipeItem = new ToolStripMenuItem("Wipe Cloud Storage...", null, async (_, _) => await WipeCloudStorageAsync());
         menu.Items.Add(wipeItem);
         menu.Items.Add(new ToolStripSeparator());
+        var deployItem = new ToolStripMenuItem("Deploy Azure Functions...", null, (_, _) => OpenFunctionsDeployment());
+        menu.Items.Add(deployItem);
         var settingsItem = new ToolStripMenuItem("Settings", null, (_, _) => OpenSettings());
         menu.Items.Add(settingsItem);
-        var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => Application.ExitThread());
+        var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => RequestShutdown("tray"));
         menu.Items.Add(exitItem);
         UpdatePauseMenuText(_ownerStateCache.State);
         UpdateUploadModeMenuState(_options.CurrentValue.UploadMode);
@@ -455,6 +468,33 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         });
     }
 
+    private void OpenFunctionsDeployment()
+    {
+        InvokeOnUi(() =>
+        {
+            if (_deployForm is { IsDisposed: false })
+            {
+                _deployForm.Show();
+                _deployForm.Activate();
+                return;
+            }
+
+            try
+            {
+                _deployForm = new DeployFunctionsForm(_settingsStore, _deploymentService);
+                _deployForm.FormClosed += (_, _) => _deployForm = null;
+                _deployForm.Show();
+                _deployForm.Activate();
+            }
+            catch (Exception ex)
+            {
+                _deployForm = null;
+                _logger.LogError(ex, "Failed to open deployment window");
+                MessageBox.Show("Unable to open the deployment window. Check the logs for details.", "Cloud Clipboard", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        });
+    }
+
     private void ShowDiagnostics()
     {
         InvokeOnUi(() =>
@@ -468,6 +508,77 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
             _diagnosticsForm.Show();
             _diagnosticsForm.Activate();
         });
+    }
+
+    private void RequestShutdown(string source)
+    {
+        if (Interlocked.Exchange(ref _shutdownRequested, 1) == 1)
+        {
+            _logger.LogInformation("Shutdown already requested; ignoring {Source}", source);
+            return;
+        }
+
+        _logger.LogInformation("Exit requested via {Source}; stopping Cloud Clipboard agent", source);
+
+        try
+        {
+            _appLifetime.StopApplication();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to signal host shutdown");
+        }
+
+        InvokeOnUi(() =>
+        {
+            _notifyIcon?.ShowBalloonTip(1500, "Cloud Clipboard", "Shutting down...", ToolTipIcon.Info);
+            Application.ExitThread();
+        });
+
+        StartShutdownFailSafe();
+    }
+
+    private void StartShutdownFailSafe()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException)
+            {
+            }
+
+            if (!_appLifetime.ApplicationStopped.IsCancellationRequested)
+            {
+                _logger.LogWarning("Host shutdown is taking too long; forcing exit");
+                ForceTerminateProcess("shutdown timeout");
+            }
+        });
+    }
+
+    private void OnHostStopped()
+        => ForceTerminateProcess("host stopped");
+
+    private void ForceTerminateProcess(string reason)
+    {
+        if (Interlocked.Exchange(ref _processExitRequested, 1) == 1)
+        {
+            return;
+        }
+
+        _logger.LogInformation("Terminating Cloud Clipboard agent ({Reason})", reason);
+        InvokeOnUi(Application.ExitThread);
+
+        try
+        {
+            Environment.Exit(0);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Environment.Exit failed");
+        }
     }
 
     private void ShowBalloon(string title, string message)
@@ -508,6 +619,7 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
 
     public override void Dispose()
     {
+        _applicationStoppedRegistration.Dispose();
         _historyCache.HistoryChanged -= OnHistoryChanged;
         _ownerStateCache.StateChanged -= OnOwnerStateChanged;
         _manualUploadStore.PendingChanged -= OnManualUploadPendingChanged;
@@ -532,6 +644,13 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
                 _settingsForm.Close();
                 _settingsForm.Dispose();
                 _settingsForm = null;
+            }
+
+            if (_deployForm is not null)
+            {
+                _deployForm.Close();
+                _deployForm.Dispose();
+                _deployForm = null;
             }
 
             if (_notifyIcon is not null)

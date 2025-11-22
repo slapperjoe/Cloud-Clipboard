@@ -27,4 +27,21 @@
     <PackageReference Include="Azure.Messaging.WebPubSub.Client" Version="1.0.0" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.8" />
   </ItemGroup>
+
+  <ItemGroup>
+    <FunctionsZipSourceProject Include="..\..\Functions\CloudClipboard.Functions\CloudClipboard.Functions.csproj" />
+  </ItemGroup>
+
+  <Target Name="BuildFunctionsZip" BeforeTargets="GetCopyToOutputDirectoryItems" Condition="'$(BuildingSolutionFile)' != 'true'">
+    <MSBuild Projects="@(FunctionsZipSourceProject)"
+             Targets="Build"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <ItemGroup>
+    <Content Include="$(FunctionsZipPath)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>$(FunctionsZipFileName)</Link>
+    </Content>
+  </ItemGroup>
 </Project>

@@ -24,6 +24,7 @@ public sealed class AgentOptions
     public NotificationTransport NotificationTransport { get; set; } = NotificationTransport.PubSub;
     public ClipboardSyncDirection SyncDirection { get; set; } = ClipboardSyncDirection.Full;
     public List<PinnedClipboardItem> PinnedItems { get; set; } = new();
+    public FunctionsDeploymentOptions FunctionsDeployment { get; set; } = FunctionsDeploymentOptions.CreateDefault();
 
     [JsonIgnore]
     public bool IsUploadEnabled => SyncDirection is ClipboardSyncDirection.Full or ClipboardSyncDirection.OnlyCut;

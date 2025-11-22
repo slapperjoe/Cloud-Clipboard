@@ -36,6 +36,7 @@ public sealed class JsonAgentSettingsStore : IAgentSettingsStore
             var document = JsonSerializer.Deserialize<AgentSettingsDocument>(File.ReadAllText(path), SerializerOptions);
             var result = document?.Agent ?? CreateDefaults();
             result.PinnedItems ??= new();
+            result.FunctionsDeployment ??= FunctionsDeploymentOptions.CreateDefault();
             return result;
         }
         catch (JsonException)
@@ -71,7 +72,8 @@ public sealed class JsonAgentSettingsStore : IAgentSettingsStore
     private static AgentOptions CreateDefaults()
         => new()
         {
-            PinnedItems = new()
+            PinnedItems = new(),
+            FunctionsDeployment = FunctionsDeploymentOptions.CreateDefault()
         };
 
     private static void WriteSettingsFile(string path, AgentOptions options)

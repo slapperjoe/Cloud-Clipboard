@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <RepositoryRoot Condition="'$(RepositoryRoot)' == ''">$(MSBuildThisFileDirectory)</RepositoryRoot>
+    <FunctionsZipFileName Condition="'$(FunctionsZipFileName)' == ''">CloudClipboard.Functions.zip</FunctionsZipFileName>
+    <FunctionsZipOutputDirectory Condition="'$(FunctionsZipOutputDirectory)' == ''">$(RepositoryRoot)artifacts\</FunctionsZipOutputDirectory>
+    <FunctionsZipPath Condition="'$(FunctionsZipPath)' == ''">$(FunctionsZipOutputDirectory)$(FunctionsZipFileName)</FunctionsZipPath>
+  </PropertyGroup>
+</Project>

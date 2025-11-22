@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
+    <FunctionsPublishIntermediate>$(IntermediateOutputPath)functions_publish\</FunctionsPublishIntermediate>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,4 +21,16 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Core\CloudClipboard.Core\CloudClipboard.Core.csproj" />
   </ItemGroup>
+
+  <Target Name="CreateFunctionsZip" AfterTargets="Build" Condition="'$(IsFunctionsPublishCall)' != 'true'">
+    <Message Text="Creating Azure Functions deployment package at $(FunctionsZipPath)" Importance="High" />
+    <MakeDir Directories="$(FunctionsPublishIntermediate)" />
+    <MSBuild Projects="$(MSBuildProjectFullPath)"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);PublishDir=$(FunctionsPublishIntermediate);IsFunctionsPublishCall=true" />
+    <MakeDir Directories="$(FunctionsZipOutputDirectory)" />
+    <ZipDirectory SourceDirectory="$(FunctionsPublishIntermediate)"
+                  DestinationFile="$(FunctionsZipPath)"
+                  Overwrite="true" />
+  </Target>
 </Project>

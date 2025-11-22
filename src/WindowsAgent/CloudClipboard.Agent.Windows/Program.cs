@@ -1,3 +1,4 @@
+using CloudClipboard.Agent.Windows;
 using CloudClipboard.Agent.Windows.Configuration;
 using CloudClipboard.Agent.Windows.Options;
 using CloudClipboard.Agent.Windows.Services;
@@ -6,6 +7,8 @@ using CloudClipboard.Core.Services;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+
+DpiAwareness.Initialize();
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
@@ -33,6 +36,7 @@ builder.Services.AddSingleton<IOwnerStateCache, OwnerStateCache>();
 builder.Services.AddSingleton<IManualUploadStore, ManualUploadStore>();
 builder.Services.AddSingleton<IPinnedClipboardStore, PinnedClipboardStore>();
 builder.Services.AddSingleton<IAgentDiagnostics, AgentDiagnostics>();
+builder.Services.AddSingleton<IFunctionsDeploymentService, FunctionsDeploymentService>();
 builder.Services.AddSingleton<ClipboardPayloadSerializer>();
 builder.Services.AddSingleton<ClipboardPasteService>();
 builder.Services.AddHttpClient<ICloudClipboardClient, HttpCloudClipboardClient>();

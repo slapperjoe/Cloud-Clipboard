@@ -19,6 +19,9 @@ A .NET 8 solution that synchronizes clipboard content (text, files, and images) 
    dotnet build CloudClipboard.sln
    ```
    If your SDK install is missing `System.Data.Common`, install the .NET 8 Windows Hosting bundle or repair the SDK.
+   The build now creates an Azure Functions deployment package automatically:
+   - `artifacts/CloudClipboard.Functions.zip` contains the publish output suitable for `az functionapp deployment source config-zip`.
+   - The same zip is copied next to the Windows agent binary so the Deploy dialog can pick it up by default.
 3. **Start the Functions backend**:
    ```powershell
    cd src/Functions/CloudClipboard.Functions
@@ -56,7 +59,18 @@ dotnet publish src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agen
   /p:PublishTrimmed=false
 ```
 
-The binary lands under `src/WindowsAgent/CloudClipboard.Agent.Windows/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish`. Run `CloudClipboard.Agent.Windows.exe` directly and the agent will emit `agentsettings.json` in the same directory if it is missing.
+The binary lands under `src/WindowsAgent/CloudClipboard.Agent.Windows/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish`. Run `CloudClipboard.Agent.Windows.exe` directly and the agent will emit `agentsettings.json` in the same directory if it is missing. The publish folder will also carry the latest `CloudClipboard.Functions.zip`, so you can ship the agent + zip together for offline deployments.
+
+## Deploying Azure Functions via the tray
+
+- Prerequisites:
+   - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) installed and available on `PATH`.
+   - An Azure Function App (`Consumption` or better) plus Storage account; the dialog only needs the app name, resource group, subscription, and Function key.
+- Launch the agent, right-click the tray icon, and choose **Deploy Azure Functions…**.
+- The dialog pre-fills the package path with the auto-generated zip. Update the Function App details and (optionally) the Functions key.
+- Use **Sign In** to trigger `az login --use-device-code`. The log will show explicit errors if `az` cannot be found or authentication fails.
+- Press **Deploy** to push the zip via `az functionapp deployment source config-zip`. Successful runs update `agentsettings.json` with the deployment metadata.
+- All deployment settings (app name, resource group, subscription, package path) live in the Settings window under *Deployment Defaults* so you can edit them alongside the rest of the agent configuration.
 
 ## Notification delivery
 
@@ -75,3 +89,18 @@ The Functions backend now emits notification rows into the `Storage:Notification
 - Add download/paste workflow in the agent (list recent items, choose destination, push into local clipboard).
 - Harden Azure resources via IaC (Bicep/Terraform) and wire GitHub Actions for CI/CD.
 - Introduce per-item encryption + user-level auth flows.
+
+---
+
+```
+   _____ _ _   _           _ _             _ _ _
+  / ____(_) | | |         | (_)           (_) | |
+ | |     _| |_| |__   __ _| |_ _ __   __ _ _| | | ___
+ | |    | | __| '_ \ / _` | | | '_ \ / _` | | | |/ _ \
+ | |____| | |_| | | | (_| | | | | | | (_| | | | |  __/
+  \_____|_|\__|_| |_|\__,_|_|_|_| |_|\__, |_|_|_|\___|
+                                       __/ |
+                                      |___/
+```
+
+> This project was built with plenty of help from GitHub Copilot (GPT-5.1-Codex Preview). Thanks for letting me pair! :)

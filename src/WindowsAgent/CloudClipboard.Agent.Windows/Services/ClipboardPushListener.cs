@@ -115,6 +115,12 @@ public sealed class ClipboardPushListener : BackgroundService
             }
             catch (HttpRequestException httpEx)
             {
+                if (httpEx.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _logger.LogInformation("Notifications endpoint unavailable for {OwnerId}; stopping polling loop", ownerId);
+                    return;
+                }
+
                 if (IsExpectedHttpStatus(httpEx.StatusCode))
                 {
                     _logger.LogDebug("Notification poll returned {StatusCode} for {OwnerId}", httpEx.StatusCode, ownerId);

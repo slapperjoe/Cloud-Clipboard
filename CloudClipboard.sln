@@ -12,6 +12,9 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "WindowsAgent", "WindowsAgent", "{5E56D281-3BDD-DB43-A380-0ED9E6B8096B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CloudClipboard.Agent.Windows", "src\WindowsAgent\CloudClipboard.Agent.Windows\CloudClipboard.Agent.Windows.csproj", "{BAD4878F-3A62-47AA-B5BF-439B0AAF700B}"
+	ProjectSection(ProjectDependencies) = postProject
+		{26791CD3-D53E-4FF9-979D-E9744D61B8FD} = {26791CD3-D53E-4FF9-979D-E9744D61B8FD}
+	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Functions", "Functions", "{8ACE4114-8886-9720-B387-343844A27A5F}"
 EndProject

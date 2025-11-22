@@ -38,6 +38,10 @@ public sealed class SettingsForm : Form
     private readonly NumericUpDown _ownerStatePollNumeric;
     private readonly CheckBox _pushEnabledCheckbox;
     private readonly NumericUpDown _pushReconnectNumeric;
+    private readonly TextBox _deployFunctionAppText;
+    private readonly TextBox _deployResourceGroupText;
+    private readonly TextBox _deploySubscriptionText;
+    private readonly TextBox _deployPackagePathText;
     private readonly Label _statusLabel;
     private bool _initializing;
 
@@ -50,7 +54,9 @@ public sealed class SettingsForm : Form
         Text = "Cloud Clipboard Settings";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(900, 600);
-        Font = new Font(Font.FontFamily, 9);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+        Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
 
         var root = new TableLayoutPanel
         {
@@ -148,6 +154,28 @@ public sealed class SettingsForm : Form
 
         _pushReconnectNumeric = CreateNumericUpDown(5, 300);
         AddLabeledControl(fieldsTable, "Push Reconnect Seconds", "Delay before reconnecting when the notification poll returns.", _pushReconnectNumeric);
+
+        var deployHeader = new Label
+        {
+            Text = "Deployment Defaults",
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Padding = new Padding(0, 15, 0, 5)
+        };
+        fieldsTable.Controls.Add(deployHeader);
+        fieldsTable.SetColumnSpan(deployHeader, 2);
+
+        _deployFunctionAppText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Function App Name", "Name of the Azure Functions app to deploy to.", _deployFunctionAppText);
+
+        _deployResourceGroupText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Resource Group", "Azure resource group hosting the Function App.", _deployResourceGroupText);
+
+        _deploySubscriptionText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Subscription Id", "Azure subscription ID that contains the Function App.", _deploySubscriptionText);
+
+        _deployPackagePathText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Package Path", "Path to the packaged function zip (defaults next to the agent).", _deployPackagePathText);
 
         var fieldsPanel = new Panel
         {
@@ -279,6 +307,10 @@ public sealed class SettingsForm : Form
         _ownerStatePollNumeric.ValueChanged += (_, _) => UpdateOption(() => _workingCopy.OwnerStatePollSeconds = (int)_ownerStatePollNumeric.Value);
         _pushEnabledCheckbox.CheckedChanged += (_, _) => UpdateOption(() => _workingCopy.EnablePushNotifications = _pushEnabledCheckbox.Checked);
         _pushReconnectNumeric.ValueChanged += (_, _) => UpdateOption(() => _workingCopy.PushReconnectSeconds = (int)_pushReconnectNumeric.Value);
+        _deployFunctionAppText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().FunctionAppName = _deployFunctionAppText.Text.Trim());
+        _deployResourceGroupText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().ResourceGroup = _deployResourceGroupText.Text.Trim());
+        _deploySubscriptionText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().SubscriptionId = _deploySubscriptionText.Text.Trim());
+        _deployPackagePathText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().PackagePath = _deployPackagePathText.Text.Trim());
     }
 
     private void ApplyOptionsToControls()
@@ -300,6 +332,11 @@ public sealed class SettingsForm : Form
         _ownerStatePollNumeric.Value = ClampNumeric(_ownerStatePollNumeric, _workingCopy.OwnerStatePollSeconds);
         _pushEnabledCheckbox.Checked = _workingCopy.EnablePushNotifications;
         _pushReconnectNumeric.Value = ClampNumeric(_pushReconnectNumeric, _workingCopy.PushReconnectSeconds);
+        var deployment = _workingCopy.FunctionsDeployment ?? FunctionsDeploymentOptions.CreateDefault();
+        _deployFunctionAppText.Text = deployment.FunctionAppName ?? string.Empty;
+        _deployResourceGroupText.Text = deployment.ResourceGroup ?? string.Empty;
+        _deploySubscriptionText.Text = deployment.SubscriptionId ?? string.Empty;
+        _deployPackagePathText.Text = deployment.PackagePath ?? string.Empty;
     }
 
     private void SaveSettings()
@@ -377,6 +414,16 @@ public sealed class SettingsForm : Form
     {
         var json = JsonSerializer.Serialize(source);
         return JsonSerializer.Deserialize<AgentOptions>(json)!;
+    }
+
+    private FunctionsDeploymentOptions EnsureDeploymentOptions()
+    {
+        if (_workingCopy.FunctionsDeployment is null)
+        {
+            _workingCopy.FunctionsDeployment = FunctionsDeploymentOptions.CreateDefault();
+        }
+
+        return _workingCopy.FunctionsDeployment;
     }
 
     private TextBox CreateTextBox()
