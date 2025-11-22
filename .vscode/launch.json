@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    
+    
+    {
+      "name": "Attach to .NET Functions",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:azureFunctions.pickProcess}"
+    },
+    {
+      "name": "Debug Functions Host",
+      "type": "coreclr",
+      "request": "attach",
+      "preLaunchTask": "start functions host",
+      "processId": "${command:azureFunctions.pickProcess}",
+      "justMyCode": true
+    },
+    {
+      "name": "Debug Windows Agent",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build (windows agent)",
+      "program": "${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/bin/Debug/net8.0-windows10.0.19041.0/win-x64/CloudClipboard.Agent.Windows.dll",
+      "cwd": "${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "justMyCode": true
+    }
+  ]
+}

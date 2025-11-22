@@ -1,0 +1,22 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+  },
+  "Storage": {
+    "BlobConnectionString": "UseDevelopmentStorage=true",
+    "TableConnectionString": "UseDevelopmentStorage=true",
+    "PayloadContainer": "clipboardpayloads",
+    "MetadataTable": "ClipboardItems",
+    "NotificationsTable": "ClipboardNotifications"
+  },
+  "Notifications": {
+    "PubSub": {
+      "ConnectionString": "",
+      "Hub": "clipboard",
+      "OwnerGroupPrefix": "owner",
+      "TokenTtlMinutes": 60
+    }
+  }
+}

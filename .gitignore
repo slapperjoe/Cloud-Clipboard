@@ -1,0 +1,4 @@
+func-host.log
+/publish/*
+/src/**/bin/
+/src/**/obj/

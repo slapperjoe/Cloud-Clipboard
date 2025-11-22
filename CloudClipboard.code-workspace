@@ -1,0 +1,19 @@
+{
+  "folders": [
+    {
+      "name": "Cloud Clipboard",
+      "path": "."
+    },
+    {
+      "name": "Functions",
+      "path": "src/Functions/CloudClipboard.Functions"
+    },
+    {
+      "name": "Windows Agent",
+      "path": "src/WindowsAgent/CloudClipboard.Agent.Windows"
+    }
+  ],
+  "settings": {
+    "dotnet.defaultSolution": "CloudClipboard.sln"
+  }
+}
