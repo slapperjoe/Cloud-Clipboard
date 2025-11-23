@@ -8,13 +8,14 @@
     <UseWindowsService>true</UseWindowsService>
     <UseWindowsForms>true</UseWindowsForms>
     <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
+    <SelfContained>false</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>
     <TrimMode>link</TrimMode>
     <PublishReadyToRun>true</PublishReadyToRun>
     <InvariantGlobalization>true</InvariantGlobalization>
     <IncludeAllContentForSelfExtract>false</IncludeAllContentForSelfExtract>
     <StripSymbols>true</StripSymbols>
+    <ApplicationIcon>AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
