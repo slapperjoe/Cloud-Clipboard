@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Text;
 using System.Runtime.InteropServices;
@@ -34,8 +33,10 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
     private readonly IAgentDiagnostics _diagnostics;
     private readonly IHostApplicationLifetime _appLifetime;
     private readonly IFunctionsDeploymentService _deploymentService;
+    private readonly IAppIconProvider _iconProvider;
     private readonly CancellationTokenRegistration _applicationStoppedRegistration;
     private NotifyIcon? _notifyIcon;
+    private ContextMenuStrip? _contextMenu;
     private SynchronizationContext? _uiContext;
     private readonly TaskCompletionSource<bool> _uiReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Thread? _uiThread;
@@ -48,12 +49,12 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
     private ToolStripMenuItem? _manualModeMenuItem;
     private GlobalHotKeyRegistration? _manualUploadHotKey;
     private GlobalHotKeyRegistration? _manualDownloadHotKey;
+    private HotKeyBinding? _registeredUploadHotKey;
+    private HotKeyBinding? _registeredDownloadHotKey;
     private DiagnosticsForm? _diagnosticsForm;
     private SettingsForm? _settingsForm;
     private DeployFunctionsForm? _deployForm;
     private IDisposable? _optionsSubscription;
-    private Icon? _scissorsIcon;
-    private IntPtr _scissorsIconHandle;
     private bool _stateInitialized;
     private int _shutdownRequested;
     private int _processExitRequested;
@@ -72,7 +73,8 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         IPinnedClipboardStore pinnedStore,
         IAgentDiagnostics diagnostics,
         IHostApplicationLifetime appLifetime,
-        IFunctionsDeploymentService deploymentService)
+        IFunctionsDeploymentService deploymentService,
+        IAppIconProvider iconProvider)
     {
         _historyCache = historyCache;
         _pasteService = pasteService;
@@ -87,6 +89,7 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         _diagnostics = diagnostics;
         _appLifetime = appLifetime;
         _deploymentService = deploymentService;
+        _iconProvider = iconProvider;
         _applicationStoppedRegistration = _appLifetime.ApplicationStopped.Register(OnHostStopped);
     }
 
@@ -102,6 +105,7 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         using var registration = stoppingToken.Register(() => InvokeOnUi(Application.ExitThread));
         await _uiReady.Task.ConfigureAwait(false);
         RefreshTrayPresentation();
+        CheckFunctionsDeploymentFreshness();
         _optionsSubscription = _options.OnChange(_ => RefreshTrayPresentation());
 
         try
@@ -130,13 +134,14 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
                 SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
                 _uiContext = SynchronizationContext.Current;
 
+                _contextMenu = BuildContextMenu();
                 _notifyIcon = new NotifyIcon
                 {
-                    Icon = GetOrCreateScissorsIcon(),
+                    Icon = _iconProvider.GetIcon(32),
                     Text = "Cloud Clipboard",
-                    Visible = true,
-                    ContextMenuStrip = BuildContextMenu()
+                    Visible = true
                 };
+                _notifyIcon.MouseUp += OnNotifyIconMouseUp;
 
                 _uiReady.TrySetResult(true);
                 Application.Run();
@@ -155,37 +160,11 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         _uiThread.Start();
     }
 
-    private Icon GetOrCreateScissorsIcon()
-    {
-        if (_scissorsIcon is not null)
-        {
-            return _scissorsIcon;
-        }
-
-        var bitmap = new Bitmap(32, 32);
-        using (var graphics = Graphics.FromImage(bitmap))
-        {
-            graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            graphics.Clear(Color.FromArgb(32, 32, 32));
-            using var font = new Font("Segoe UI Symbol", 20, FontStyle.Regular, GraphicsUnit.Pixel);
-            using var brush = new SolidBrush(Color.White);
-            var glyph = "\u2702";
-            var size = graphics.MeasureString(glyph, font);
-            var location = new PointF((bitmap.Width - size.Width) / 2f, (bitmap.Height - size.Height) / 2f);
-            graphics.DrawString(glyph, font, brush, location);
-        }
-
-        _scissorsIconHandle = bitmap.GetHicon();
-        _scissorsIcon = Icon.FromHandle(_scissorsIconHandle);
-        bitmap.Dispose();
-        return _scissorsIcon;
-    }
-
     private void OnHistoryChanged(object? sender, IReadOnlyList<ClipboardItemDto> items)
     {
         InvokeOnUi(() =>
         {
-            if (_notifyIcon?.ContextMenuStrip is ContextMenuStrip menu)
+            if (_contextMenu is { } menu)
             {
                 RefreshHistoryMenu(menu, items);
             }
@@ -196,7 +175,7 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
 
     private ContextMenuStrip BuildContextMenu()
     {
-        var menu = new ContextMenuStrip();
+        var menu = new TrayContextMenuStrip();
         RefreshHistoryMenu(menu, _historyCache.Snapshot);
         menu.Items.Add(new ToolStripSeparator());
         _pinnedMenuItem = new ToolStripMenuItem("Pinned Items");
@@ -250,6 +229,66 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         UpdateManualUploadMenuState();
         UpdateManualDownloadMenuState();
         return menu;
+    }
+
+    private void OnNotifyIconMouseUp(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Right || _contextMenu is null)
+        {
+            return;
+        }
+
+        var location = ClampMenuLocation(Cursor.Position, _contextMenu.GetPreferredSize(Size.Empty));
+        _contextMenu.Show(location);
+        _contextMenu.BringToFront();
+    }
+
+    private static Point ClampMenuLocation(Point desired, Size menuSize)
+    {
+        var screen = Screen.FromPoint(desired);
+        var working = screen.WorkingArea;
+        var width = Math.Max(menuSize.Width, 1);
+        var height = Math.Max(menuSize.Height, 1);
+
+        var x = desired.X;
+        var y = desired.Y;
+
+        if (x + width > working.Right)
+        {
+            x = Math.Max(working.Left, working.Right - width);
+        }
+
+        if (y + height > working.Bottom)
+        {
+            y = Math.Max(working.Top, working.Bottom - height);
+        }
+
+        if (x < working.Left)
+        {
+            x = working.Left;
+        }
+
+        if (y < working.Top)
+        {
+            y = working.Top;
+        }
+
+        return new Point(x, y);
+    }
+
+    private sealed class TrayContextMenuStrip : ContextMenuStrip
+    {
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                const int WsExToolWindow = 0x00000080;
+                const int WsExTopMost = 0x00000008;
+                cp.ExStyle |= WsExToolWindow | WsExTopMost;
+                return cp;
+            }
+        }
     }
 
     private void RefreshHistoryMenu(ContextMenuStrip menu, IReadOnlyList<ClipboardItemDto> items)
@@ -454,7 +493,7 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
 
             try
             {
-                _settingsForm = new SettingsForm(_settingsStore);
+                _settingsForm = new SettingsForm(_settingsStore, _iconProvider);
                 _settingsForm.FormClosed += (_, _) => _settingsForm = null;
                 _settingsForm.Show();
                 _settingsForm.Activate();
@@ -584,6 +623,39 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
     private void ShowBalloon(string title, string message)
         => InvokeOnUi(() => _notifyIcon?.ShowBalloonTip(2000, title, message, ToolTipIcon.Info));
 
+    private void CheckFunctionsDeploymentFreshness()
+    {
+        try
+        {
+            var deployment = _options.CurrentValue.FunctionsDeployment;
+            if (deployment is null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(deployment.PackagePath) || string.IsNullOrWhiteSpace(deployment.LastPackageHash))
+            {
+                return;
+            }
+
+            var localHash = FunctionsDeploymentUtilities.TryComputePackageHash(deployment.PackagePath);
+            if (localHash is null)
+            {
+                return;
+            }
+
+            if (!string.Equals(localHash, deployment.LastPackageHash, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Local Functions build differs from last deployed version.");
+                ShowBalloon("Cloud Clipboard", "A newer Functions build is available locally. Deploy to publish the update.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to compare Functions package hashes");
+        }
+    }
+
     private bool EnsureUploadsEnabled(string action)
     {
         if (_options.CurrentValue.IsUploadEnabled)
@@ -653,6 +725,12 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
                 _deployForm = null;
             }
 
+            if (_contextMenu is not null)
+            {
+                _contextMenu.Dispose();
+                _contextMenu = null;
+            }
+
             if (_notifyIcon is not null)
             {
                 _notifyIcon.Visible = false;
@@ -662,13 +740,6 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
 
             Application.ExitThread();
         });
-
-        if (_scissorsIconHandle != IntPtr.Zero)
-        {
-            NativeMethods.DestroyIcon(_scissorsIconHandle);
-            _scissorsIconHandle = IntPtr.Zero;
-            _scissorsIcon = null;
-        }
 
         base.Dispose();
     }
@@ -1082,39 +1153,47 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         UpdateUploadModeMenuState(_options.CurrentValue.UploadMode);
         UpdateManualDownloadMenuState();
         UpdatePinnedMenu();
-        RefreshManualDownloadHotKey();
     }
 
     private void RefreshManualUploadHotKey()
     {
         InvokeOnUi(() =>
         {
-            _manualUploadHotKey?.Dispose();
-            _manualUploadHotKey = null;
-
-            if (_options.CurrentValue.UploadMode != ClipboardUploadMode.Manual)
+            var uploadsAllowed = _options.CurrentValue.IsUploadEnabled && _options.CurrentValue.UploadMode == ClipboardUploadMode.Manual;
+            if (!uploadsAllowed)
             {
-                return;
-            }
-
-            if (!_options.CurrentValue.IsUploadEnabled)
-            {
+                _manualUploadHotKey?.Dispose();
+                _manualUploadHotKey = null;
+                _registeredUploadHotKey = null;
                 return;
             }
 
             if (!HotKeyBinding.TryParse(GetUploadHotkey(), out var binding))
             {
+                _manualUploadHotKey?.Dispose();
+                _manualUploadHotKey = null;
+                _registeredUploadHotKey = null;
                 _logger.LogWarning("Manual upload hotkey '{Hotkey}' is invalid", _options.CurrentValue.ManualUploadHotkey);
                 return;
             }
 
+            if (_registeredUploadHotKey is HotKeyBinding current && current == binding && _manualUploadHotKey is not null)
+            {
+                return;
+            }
+
+            _manualUploadHotKey?.Dispose();
+            _manualUploadHotKey = null;
+
             try
             {
                 _manualUploadHotKey = new GlobalHotKeyRegistration(binding, () => _ = TriggerManualUploadAsync("hotkey"), _logger);
+                _registeredUploadHotKey = binding;
                 _logger.LogInformation("Manual upload hotkey registered: {Hotkey}", binding.DisplayText);
             }
             catch (Exception ex)
             {
+                _registeredUploadHotKey = null;
                 _logger.LogError(ex, "Unable to register manual upload hotkey {Hotkey}", binding.DisplayText);
                 ShowBalloon("Cloud Clipboard", "Failed to register manual upload hotkey.");
             }
@@ -1125,27 +1204,40 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
     {
         InvokeOnUi(() =>
         {
-            _manualDownloadHotKey?.Dispose();
-            _manualDownloadHotKey = null;
+            if (!_options.CurrentValue.IsDownloadEnabled)
+            {
+                _manualDownloadHotKey?.Dispose();
+                _manualDownloadHotKey = null;
+                _registeredDownloadHotKey = null;
+                return;
+            }
 
             if (!HotKeyBinding.TryParse(GetDownloadHotkey(), out var binding))
             {
+                _manualDownloadHotKey?.Dispose();
+                _manualDownloadHotKey = null;
+                _registeredDownloadHotKey = null;
                 _logger.LogWarning("Manual download hotkey '{Hotkey}' is invalid", _options.CurrentValue.ManualDownloadHotkey);
                 return;
             }
 
-            if (!_options.CurrentValue.IsDownloadEnabled)
+            if (_registeredDownloadHotKey is HotKeyBinding current && current == binding && _manualDownloadHotKey is not null)
             {
                 return;
             }
 
+            _manualDownloadHotKey?.Dispose();
+            _manualDownloadHotKey = null;
+
             try
             {
                 _manualDownloadHotKey = new GlobalHotKeyRegistration(binding, () => _ = TriggerManualDownloadAsync("hotkey"), _logger);
+                _registeredDownloadHotKey = binding;
                 _logger.LogInformation("Manual download hotkey registered: {Hotkey}", binding.DisplayText);
             }
             catch (Exception ex)
             {
+                _registeredDownloadHotKey = null;
                 _logger.LogError(ex, "Unable to register manual download hotkey {Hotkey}", binding.DisplayText);
                 ShowBalloon("Cloud Clipboard", "Failed to register manual download hotkey.");
             }
@@ -1338,8 +1430,5 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        public static extern bool DestroyIcon(IntPtr hIcon);
     }
 }

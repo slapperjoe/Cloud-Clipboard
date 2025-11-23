@@ -17,6 +17,8 @@ public sealed class DeployFunctionsForm : Form
     private readonly IFunctionsDeploymentService _deploymentService;
     private AgentOptions _options;
 
+    private readonly TabControl _tabControl;
+    private readonly TabPage _activityTab;
     private readonly TextBox _functionAppText;
     private readonly TextBox _resourceGroupText;
     private readonly TextBox _subscriptionText;
@@ -38,19 +40,19 @@ public sealed class DeployFunctionsForm : Form
 
         Text = "Deploy Azure Functions";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(900, 640);
-        MinimumSize = new Size(900, 620);
-        AutoScaleMode = AutoScaleMode.Font;
+        ClientSize = new Size(1100, 760);
+        MinimumSize = new Size(1000, 720);
+        AutoScaleMode = AutoScaleMode.Dpi;
 
-        var root = new TableLayoutPanel
+        _tabControl = new TabControl
         {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2,
-            Padding = new Padding(4)
+            Dock = DockStyle.Fill
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
+
+        var settingsTab = new TabPage("Settings")
+        {
+            Padding = new Padding(0)
+        };
 
         var fields = new TableLayoutPanel
         {
@@ -168,10 +170,17 @@ public sealed class DeployFunctionsForm : Form
         fieldsHost.Controls.Add(fields);
         fieldsHost.Resize += (_, _) => fields.Width = Math.Max(fieldsHost.ClientSize.Width - fields.Margin.Horizontal, fields.PreferredSize.Width);
 
-        root.Controls.Add(fieldsHost, 0, 0);
-        root.Controls.Add(logGroup, 0, 1);
+        settingsTab.Controls.Add(fieldsHost);
+        _tabControl.TabPages.Add(settingsTab);
 
-        Controls.Add(root);
+        _activityTab = new TabPage("Activity")
+        {
+            Padding = new Padding(10)
+        };
+        _activityTab.Controls.Add(logGroup);
+        _tabControl.TabPages.Add(_activityTab);
+
+        Controls.Add(_tabControl);
 
         ApplyOptions();
     }
@@ -246,6 +255,8 @@ public sealed class DeployFunctionsForm : Form
             return;
         }
 
+        ShowActivityTab();
+
         if (!TryResolveAz(out _))
         {
             return;
@@ -267,7 +278,8 @@ public sealed class DeployFunctionsForm : Form
         if (result.Succeeded)
         {
             AppendLog("Deployment succeeded.");
-            SaveDeploymentSettings();
+            var packageHash = FunctionsDeploymentUtilities.TryComputePackageHash(request.PackagePath);
+            SaveDeploymentSettings(packageHash);
         }
         else
         {
@@ -281,12 +293,7 @@ public sealed class DeployFunctionsForm : Form
     private string ResolvePackagePath()
     {
         var path = _packagePathText.Text.Trim();
-        if (!Path.IsPathRooted(path))
-        {
-            path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, path));
-        }
-
-        return path;
+        return FunctionsDeploymentUtilities.ResolvePackagePath(path);
     }
 
     private void AppendLog(string line)
@@ -326,6 +333,7 @@ public sealed class DeployFunctionsForm : Form
             return;
         }
 
+        ShowActivityTab();
         AppendLog("Launching Azure CLI device login...");
         _ = Task.Run(async () =>
         {
@@ -334,7 +342,7 @@ public sealed class DeployFunctionsForm : Form
         });
     }
 
-    private void SaveDeploymentSettings()
+    private void SaveDeploymentSettings(string? packageHash)
     {
         _options.FunctionsDeployment ??= FunctionsDeploymentOptions.CreateDefault();
         _options.FunctionsDeployment.FunctionAppName = _functionAppText.Text.Trim();
@@ -342,12 +350,26 @@ public sealed class DeployFunctionsForm : Form
         _options.FunctionsDeployment.SubscriptionId = _subscriptionText.Text.Trim();
         _options.FunctionsDeployment.PackagePath = _packagePathText.Text.Trim();
 
+        _options.FunctionsDeployment.LastDeployedUtc = DateTimeOffset.UtcNow;
+        if (!string.IsNullOrWhiteSpace(packageHash))
+        {
+            _options.FunctionsDeployment.LastPackageHash = packageHash;
+        }
+
         if (_updateFunctionKeyCheckBox.Checked)
         {
             _options.FunctionKey = string.IsNullOrWhiteSpace(_functionKeyText.Text) ? null : _functionKeyText.Text.Trim();
         }
 
         _settingsStore.Save(_options);
+    }
+
+    private void ShowActivityTab()
+    {
+        if (_tabControl.SelectedTab != _activityTab)
+        {
+            _tabControl.SelectedTab = _activityTab;
+        }
     }
 
     private bool TryResolveAz(out string azPath)

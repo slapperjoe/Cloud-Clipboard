@@ -7,7 +7,8 @@ namespace CloudClipboard.Agent.Windows.Configuration;
 public enum BackupScope
 {
     Startup,
-    ManualSave
+    ManualSave,
+    Sync
 }
 
 internal static class AgentSettingsBackup
@@ -89,6 +90,7 @@ internal static class AgentSettingsBackup
         {
             BackupScope.Startup => "startup",
             BackupScope.ManualSave => "manual",
+            BackupScope.Sync => "sync",
             _ => "other"
         };
 }

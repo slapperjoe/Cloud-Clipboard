@@ -37,7 +37,7 @@ public sealed class HttpCloudClipboardClient : ICloudClipboardClient, IDisposabl
         _optionsSubscription = _optionsMonitor.OnChange(ApplyBaseAddress);
     }
 
-    public async Task UploadAsync(ClipboardUploadRequest request, CancellationToken cancellationToken = default)
+    public async Task<ClipboardItemDto?> UploadAsync(ClipboardUploadRequest request, CancellationToken cancellationToken = default)
     {
         var payload = await _serializer.SerializeAsync(request.Payload, cancellationToken);
         await using (payload.Stream)
@@ -63,6 +63,8 @@ public sealed class HttpCloudClipboardClient : ICloudClipboardClient, IDisposabl
                 _logger.LogError("Upload failed: {Status} {Body}", response.StatusCode, body);
                 response.EnsureSuccessStatusCode();
             }
+
+            return await response.Content.ReadFromJsonAsync<ClipboardItemDto>(cancellationToken: cancellationToken);
         }
     }
 
@@ -145,6 +147,35 @@ public sealed class HttpCloudClipboardClient : ICloudClipboardClient, IDisposabl
 
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<NotificationConnectionInfo>(cancellationToken: cancellationToken);
+    }
+
+    public async Task<OwnerConfiguration?> GetOwnerConfigurationAsync(string ownerId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, $"clipboard/owners/{Escape(ownerId)}/configuration");
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        response.EnsureSuccessStatusCode();
+        var dto = await response.Content.ReadFromJsonAsync<OwnerConfigurationDto>(cancellationToken: cancellationToken);
+        return dto?.ToModel();
+    }
+
+    public async Task<OwnerConfiguration> SetOwnerConfigurationAsync(string ownerId, string configurationJson, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, $"clipboard/owners/{Escape(ownerId)}/configuration");
+        request.Content = JsonContent.Create(new OwnerConfigurationRequest(configurationJson));
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var dto = await response.Content.ReadFromJsonAsync<OwnerConfigurationDto>(cancellationToken: cancellationToken);
+        if (dto is null)
+        {
+            throw new InvalidOperationException("Configuration endpoint returned an empty payload.");
+        }
+
+        return dto.ToModel();
     }
 
     private sealed record NotificationEnvelope
@@ -236,4 +267,11 @@ public sealed class HttpCloudClipboardClient : ICloudClipboardClient, IDisposabl
             return new ClipboardOwnerState(OwnerId, IsPaused, updated);
         }
     }
+
+    private sealed record OwnerConfigurationDto(string OwnerId, string ConfigurationJson, DateTimeOffset UpdatedUtc)
+    {
+        public OwnerConfiguration ToModel() => new(OwnerId, ConfigurationJson, UpdatedUtc);
+    }
+
+    private sealed record OwnerConfigurationRequest(string ConfigurationJson);
 }

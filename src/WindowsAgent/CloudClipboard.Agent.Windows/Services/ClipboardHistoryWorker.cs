@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using CloudClipboard.Agent.Windows.Options;
+using CloudClipboard.Core.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -17,6 +19,7 @@ public sealed class ClipboardHistoryWorker : BackgroundService
     private readonly ClipboardPasteService _pasteService;
     private readonly IOwnerStateCache _ownerStateCache;
     private bool _autoPastePerformed;
+    private DateTimeOffset? _lastRefreshUtc;
 
     public ClipboardHistoryWorker(
         ICloudClipboardClient client,
@@ -32,6 +35,7 @@ public sealed class ClipboardHistoryWorker : BackgroundService
         _options = options;
         _pasteService = pasteService;
         _ownerStateCache = ownerStateCache;
+        _cache.HistoryChanged += OnHistoryChanged;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -53,8 +57,21 @@ public sealed class ClipboardHistoryWorker : BackgroundService
                     continue;
                 }
 
+                var pushActive = options.EnablePushNotifications && options.NotificationTransport == NotificationTransport.PubSub;
+                var threshold = pushActive ? TimeSpan.FromMinutes(10) : TimeSpan.Zero;
+                if (pushActive && _cache.Snapshot.Count > 0 && _lastRefreshUtc.HasValue)
+                {
+                    var sinceLast = DateTimeOffset.UtcNow - _lastRefreshUtc.Value;
+                    if (sinceLast < threshold)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                        continue;
+                    }
+                }
+
                 var items = await _client.ListAsync(options.OwnerId, options.HistoryLength, stoppingToken);
                 _cache.Update(items);
+                _lastRefreshUtc = DateTimeOffset.UtcNow;
 
                 if (!_autoPastePerformed && !_ownerStateCache.IsPaused && options.AutoPasteLatestOnStartup && items.Count > 0)
                 {
@@ -91,4 +108,12 @@ public sealed class ClipboardHistoryWorker : BackgroundService
             }
         }
     }
+
+    public override void Dispose()
+    {
+        _cache.HistoryChanged -= OnHistoryChanged;
+        base.Dispose();
+    }
+
+    private void OnHistoryChanged(object? sender, IReadOnlyList<ClipboardItemDto> _) => _lastRefreshUtc = DateTimeOffset.UtcNow;
 }

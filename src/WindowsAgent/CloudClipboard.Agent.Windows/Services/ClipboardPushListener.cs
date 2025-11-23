@@ -3,9 +3,13 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using Azure.Messaging.WebPubSub.Clients;
+using CloudClipboard.Agent.Windows.Configuration;
+using CloudClipboard.Agent.Windows.Interop;
 using CloudClipboard.Agent.Windows.Options;
 using CloudClipboard.Core.Models;
 using Microsoft.Extensions.Hosting;
@@ -20,18 +24,31 @@ public sealed class ClipboardPushListener : BackgroundService
     private readonly IOptionsMonitor<AgentOptions> _options;
     private readonly ICloudClipboardClient _client;
     private readonly IClipboardHistoryCache _historyCache;
+    private readonly IAgentSettingsStore _settingsStore;
+    private readonly ILocalUploadTracker _localUploadTracker;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    private static readonly JsonSerializerOptions CloneSerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+    private int _transportPromptActive;
+    private DateTimeOffset _nextTransportPromptUtc;
 
     public ClipboardPushListener(
         ILogger<ClipboardPushListener> logger,
         IOptionsMonitor<AgentOptions> options,
         ICloudClipboardClient client,
-        IClipboardHistoryCache historyCache)
+        IClipboardHistoryCache historyCache,
+        IAgentSettingsStore settingsStore,
+        ILocalUploadTracker localUploadTracker)
     {
         _logger = logger;
         _options = options;
         _client = client;
         _historyCache = historyCache;
+        _settingsStore = settingsStore;
+        _localUploadTracker = localUploadTracker;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -53,8 +70,13 @@ public sealed class ClipboardPushListener : BackgroundService
                     var handled = await RunPubSubLoopAsync(ownerId, stoppingToken).ConfigureAwait(false);
                     if (!handled)
                     {
-                        var fallbackWindow = TimeSpan.FromSeconds(Math.Max(5, _options.CurrentValue.PushReconnectSeconds));
-                        await PollLoopAsync(ownerId, stoppingToken, fallbackWindow, ignoreTransportPreference: true).ConfigureAwait(false);
+                        var switched = await PromptForTransportSwitchAsync(ownerId, stoppingToken).ConfigureAwait(false);
+                        if (!switched)
+                        {
+                            _logger.LogInformation("User declined switching notification transport; retrying Web PubSub for {OwnerId}", ownerId);
+                            var retryDelay = TimeSpan.FromSeconds(Math.Max(5, _options.CurrentValue.PushReconnectSeconds));
+                            await Task.Delay(retryDelay, stoppingToken).ConfigureAwait(false);
+                        }
                     }
                 }
                 else
@@ -149,17 +171,23 @@ public sealed class ClipboardPushListener : BackgroundService
                 continue;
             }
 
-            var hasOwnerEvent = false;
+            var hasRemoteEvent = false;
             foreach (var notification in events)
             {
                 if (string.Equals(notification.OwnerId, ownerId, StringComparison.OrdinalIgnoreCase))
                 {
-                    hasOwnerEvent = true;
+                    if (_localUploadTracker.TryConsume(ownerId, notification.ItemId))
+                    {
+                        _logger.LogDebug("Ignored local notification for {ItemId}", notification.ItemId);
+                        continue;
+                    }
+
+                    hasRemoteEvent = true;
                     break;
                 }
             }
 
-            if (hasOwnerEvent)
+            if (hasRemoteEvent)
             {
                 await RefreshHistoryAsync(ownerId).ConfigureAwait(false);
             }
@@ -360,11 +388,72 @@ public sealed class ClipboardPushListener : BackgroundService
             return Task.CompletedTask;
         }
 
+        if (_localUploadTracker.TryConsume(ownerId, notification.ItemId))
+        {
+            _logger.LogDebug("Ignored local Web PubSub notification for {ItemId}", notification.ItemId);
+            return Task.CompletedTask;
+        }
+
         return RefreshHistoryAsync(ownerId);
     }
 
     private static bool IsExpectedHttpStatus(HttpStatusCode? statusCode)
     {
         return statusCode is null or HttpStatusCode.NotFound or HttpStatusCode.BadRequest;
+    }
+
+    private async Task<bool> PromptForTransportSwitchAsync(string ownerId, CancellationToken cancellationToken)
+    {
+        if (DateTimeOffset.UtcNow < _nextTransportPromptUtc)
+        {
+            return false;
+        }
+
+        if (Interlocked.CompareExchange(ref _transportPromptActive, 1, 0) == 1)
+        {
+            return false;
+        }
+
+        try
+        {
+            var message = "Azure Web PubSub is unavailable right now. Would you like to switch to long-polling notifications until connectivity is restored?";
+            var caption = "Cloud Clipboard";
+            var result = await Task.Run(() => StaThreadRunner.Run(() => MessageBox.Show(message, caption, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2)), cancellationToken).ConfigureAwait(false);
+            if (result == DialogResult.Yes)
+            {
+                await SwitchNotificationTransportAsync(NotificationTransport.Polling, cancellationToken).ConfigureAwait(false);
+                var fallbackWindow = TimeSpan.FromSeconds(Math.Max(5, _options.CurrentValue.PushReconnectSeconds));
+                await PollLoopAsync(ownerId, cancellationToken, fallbackWindow, ignoreTransportPreference: true).ConfigureAwait(false);
+                return true;
+            }
+
+            _nextTransportPromptUtc = DateTimeOffset.UtcNow.AddMinutes(5);
+            return false;
+        }
+        finally
+        {
+            Volatile.Write(ref _transportPromptActive, 0);
+        }
+    }
+
+    private Task SwitchNotificationTransportAsync(NotificationTransport transport, CancellationToken cancellationToken)
+    {
+        return Task.Run(() =>
+        {
+            var current = CloneOptions(_options.CurrentValue);
+            if (current.NotificationTransport == transport)
+            {
+                return;
+            }
+
+            current.NotificationTransport = transport;
+            _settingsStore.Save(current, BackupScope.ManualSave);
+        }, cancellationToken);
+    }
+
+    private static AgentOptions CloneOptions(AgentOptions source)
+    {
+        var json = JsonSerializer.Serialize(source, CloneSerializerOptions);
+        return JsonSerializer.Deserialize<AgentOptions>(json, CloneSerializerOptions)!;
     }
 }

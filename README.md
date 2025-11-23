@@ -93,14 +93,23 @@ The Functions backend now emits notification rows into the `Storage:Notification
 ---
 
 ```
-   _____ _ _   _           _ _             _ _ _
-  / ____(_) | | |         | (_)           (_) | |
- | |     _| |_| |__   __ _| |_ _ __   __ _ _| | | ___
- | |    | | __| '_ \ / _` | | | '_ \ / _` | | | |/ _ \
- | |____| | |_| | | | (_| | | | | | | (_| | | | |  __/
-  \_____|_|\__|_| |_|\__,_|_|_|_| |_|\__, |_|_|_|\___|
-                                       __/ |
-                                      |___/
+   _________
+       /  ____  /|
+      /  / __/ / |
+     /__/ /__/  |
+     |  | |  |  |
+     |  | |  |  |
+     |  | |  |  |
+     |  | |  |  |
+     |  | |  |  |
+     |  | |  |  |
+     |  | |  | /
+     |__|_|__|/
+   ||
+   ||
+   ||
 ```
+
+*ASCII doodle: a whimsical clipboard icon, purely decorative.*
 
 > This project was built with plenty of help from GitHub Copilot (GPT-5.1-Codex Preview). Thanks for letting me pair! :)

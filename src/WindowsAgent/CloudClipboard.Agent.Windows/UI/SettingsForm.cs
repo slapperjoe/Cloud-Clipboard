@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using System.Windows.Forms;
 using CloudClipboard.Agent.Windows.Configuration;
 using CloudClipboard.Agent.Windows.Options;
+using CloudClipboard.Agent.Windows.Services;
 using CloudClipboard.Core.Models;
 
 namespace CloudClipboard.Agent.Windows.UI;
@@ -44,10 +45,12 @@ public sealed class SettingsForm : Form
     private readonly TextBox _deployPackagePathText;
     private readonly Label _statusLabel;
     private bool _initializing;
+    private readonly IAppIconProvider _iconProvider;
 
-    public SettingsForm(IAgentSettingsStore settingsStore)
+    public SettingsForm(IAgentSettingsStore settingsStore, IAppIconProvider iconProvider)
     {
         _settingsStore = settingsStore;
+        _iconProvider = iconProvider;
         _workingCopy = CloneOptions(settingsStore.Load());
         _initializing = true;
 
@@ -57,6 +60,7 @@ public sealed class SettingsForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96F, 96F);
         Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+        Icon = _iconProvider.GetIcon(128);
 
         var root = new TableLayoutPanel
         {

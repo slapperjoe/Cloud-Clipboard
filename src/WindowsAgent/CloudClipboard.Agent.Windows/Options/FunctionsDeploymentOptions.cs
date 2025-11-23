@@ -9,6 +9,8 @@ public sealed class FunctionsDeploymentOptions
     public string ResourceGroup { get; set; } = string.Empty;
     public string SubscriptionId { get; set; } = string.Empty;
     public string PackagePath { get; set; } = GetDefaultPackagePath();
+    public string? LastPackageHash { get; set; }
+    public DateTimeOffset? LastDeployedUtc { get; set; }
 
     public static FunctionsDeploymentOptions CreateDefault()
         => new()

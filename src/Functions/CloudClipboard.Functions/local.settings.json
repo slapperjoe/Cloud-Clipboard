@@ -10,5 +10,13 @@
     "PayloadContainer": "clipboardpayloads",
     "MetadataTable": "ClipboardItems",
     "NotificationsTable": "ClipboardNotifications"
+  },
+  "Notifications": {
+    "PubSub": {
+      "ConnectionString": "",
+      "Hub": "cloudclipboardhub",
+      "OwnerGroupPrefix": "owner",
+      "TokenTtlMinutes": 60
+    }
   }
 }
