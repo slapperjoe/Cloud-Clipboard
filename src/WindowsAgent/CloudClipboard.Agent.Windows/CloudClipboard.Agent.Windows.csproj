@@ -45,4 +45,31 @@
       <Link>$(FunctionsZipFileName)</Link>
     </Content>
   </ItemGroup>
+
+  <Target Name="IncrementVersionOnBuild"
+          BeforeTargets="GenerateAssemblyInfo"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(RunIncrementVersionOnBuild)' != 'false'">
+    <PropertyGroup>
+      <_VersionFile>$(RepositoryRoot)build\Version.props</_VersionFile>
+      <_VersionToolProject>$(RepositoryRoot)build\Versioning\VersionIncrementer.csproj</_VersionToolProject>
+    </PropertyGroup>
+
+    <Error Condition="!Exists('$(_VersionFile)')" Text="Version file '$(_VersionFile)' does not exist." />
+    <Error Condition="!Exists('$(_VersionToolProject)')" Text="Version incrementer project '$(_VersionToolProject)' does not exist." />
+
+    <Exec Command="dotnet run --project &quot;$(_VersionToolProject)&quot; --configuration Release -- &quot;$(_VersionFile)&quot; CloudClipboardVersion"
+          IgnoreExitCode="false" />
+
+    <XmlPeek XmlInputPath="$(_VersionFile)"
+             Query="/Project/PropertyGroup/CloudClipboardVersion">
+      <Output TaskParameter="Result" PropertyName="_UpdatedVersion" />
+    </XmlPeek>
+
+    <PropertyGroup>
+      <CloudClipboardVersion>$(_UpdatedVersion)</CloudClipboardVersion>
+      <Version>$(_UpdatedVersion)</Version>
+      <FileVersion>$(_UpdatedVersion)</FileVersion>
+      <AssemblyVersion>$(_UpdatedVersion)</AssemblyVersion>
+    </PropertyGroup>
+  </Target>
 </Project>

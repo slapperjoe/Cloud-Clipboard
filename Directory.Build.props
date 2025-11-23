@@ -5,4 +5,12 @@
     <FunctionsZipOutputDirectory Condition="'$(FunctionsZipOutputDirectory)' == ''">$(RepositoryRoot)artifacts\</FunctionsZipOutputDirectory>
     <FunctionsZipPath Condition="'$(FunctionsZipPath)' == ''">$(FunctionsZipOutputDirectory)$(FunctionsZipFileName)</FunctionsZipPath>
   </PropertyGroup>
+
+  <Import Project="$(RepositoryRoot)build\Version.props" Condition="Exists('$(RepositoryRoot)build\Version.props')" />
+
+  <PropertyGroup Condition="'$(CloudClipboardVersion)' != ''">
+    <Version>$(CloudClipboardVersion)</Version>
+    <FileVersion>$(CloudClipboardVersion)</FileVersion>
+    <AssemblyVersion>$(CloudClipboardVersion)</AssemblyVersion>
+  </PropertyGroup>
 </Project>

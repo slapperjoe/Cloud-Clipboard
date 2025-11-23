@@ -81,14 +81,15 @@ The Functions backend now emits notification rows into the `Storage:Notification
 - **MAUI clients** can reference `CloudClipboard.Core` to build UI surfaces for macOS/Linux/mobile without duplicating serialization logic.
 - **Security**: add Azure AD auth in Functions, exchange for SAS tokens, and enable blob encryption scopes for production.
 - **Windows shell integration**: register context-menu verbs that call a lightweight CLI which posts files into the agent queue (future work).
-- **Notifications**: swap the Table Storage long-poll mechanism with Azure SignalR (or another managed push service) if you later need global fan-out and connection management.
+- **Automation hooks**: expose a lightweight CLI/Webhook so Power Automate, Logic Apps, or custom scripts can push clipboard entries without running the full Windows agent.
 
 ## Next steps
 
 - Replace polling with clipboard hook APIs for better responsiveness.
-- Add download/paste workflow in the agent (list recent items, choose destination, push into local clipboard).
 - Harden Azure resources via IaC (Bicep/Terraform) and wire GitHub Actions for CI/CD.
 - Introduce per-item encryption + user-level auth flows.
+- Ship an installer/update channel (MSIX/Winget) so non-dev machines can pick up new agent builds safely.
+- Add cross-platform agents (macOS/Linux) that reuse `CloudClipboard.Core` to round out the multi-device story.
 
 ---
 
