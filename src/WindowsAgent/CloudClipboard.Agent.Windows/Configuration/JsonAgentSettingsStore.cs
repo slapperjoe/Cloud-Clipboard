@@ -26,17 +26,14 @@ public sealed class JsonAgentSettingsStore : IAgentSettingsStore
         var path = AgentSettingsPathProvider.GetSettingsPath();
         if (!File.Exists(path))
         {
-            var defaults = CreateDefaults();
-            WriteSettingsFile(path, defaults);
-            return defaults;
+            return CreateDefaults();
         }
 
         try
         {
             var document = JsonSerializer.Deserialize<AgentSettingsDocument>(File.ReadAllText(path), SerializerOptions);
             var result = document?.Agent ?? CreateDefaults();
-            result.PinnedItems ??= new();
-            result.FunctionsDeployment ??= FunctionsDeploymentOptions.CreateDefault();
+            AgentOptionsJson.Normalize(result);
             return result;
         }
         catch (JsonException)
@@ -56,7 +53,7 @@ public sealed class JsonAgentSettingsStore : IAgentSettingsStore
     public void Save(AgentOptions options, BackupScope? backupScope = null)
     {
         var path = AgentSettingsPathProvider.GetSettingsPath();
-        options.PinnedItems ??= new();
+        AgentOptionsJson.Normalize(options);
         if (backupScope is BackupScope scope)
         {
             AgentSettingsBackup.TryCreateBackup(path, scope);

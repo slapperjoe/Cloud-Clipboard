@@ -6,12 +6,12 @@
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v8.0": {
-      "CloudClipboard.Functions/1.0.0.0": {
+      "CloudClipboard.Functions/1.0.0.3": {
         "dependencies": {
           "Azure.Data.Tables": "12.11.0",
           "Azure.Messaging.WebPubSub": "1.6.0",
           "Azure.Storage.Blobs": "12.20.0",
-          "CloudClipboard.Core": "1.0.0.1",
+          "CloudClipboard.Core": "1.0.0.3",
           "Microsoft.Azure.Functions.Worker": "1.20.0",
           "Microsoft.Azure.Functions.Worker.Extensions.Http": "3.3.0",
           "Microsoft.Azure.Functions.Worker.Sdk": "1.17.2",
@@ -638,18 +638,18 @@
           "System.Text.Encodings.Web": "8.0.0"
         }
       },
-      "CloudClipboard.Core/1.0.0.1": {
+      "CloudClipboard.Core/1.0.0.3": {
         "runtime": {
           "CloudClipboard.Core.dll": {
-            "assemblyVersion": "1.0.0.1",
-            "fileVersion": "1.0.0.1"
+            "assemblyVersion": "1.0.0.3",
+            "fileVersion": "1.0.0.3"
           }
         }
       }
     }
   },
   "libraries": {
-    "CloudClipboard.Functions/1.0.0.0": {
+    "CloudClipboard.Functions/1.0.0.3": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
@@ -1060,7 +1060,7 @@
       "path": "system.text.json/8.0.0",
       "hashPath": "system.text.json.8.0.0.nupkg.sha512"
     },
-    "CloudClipboard.Core/1.0.0.1": {
+    "CloudClipboard.Core/1.0.0.3": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

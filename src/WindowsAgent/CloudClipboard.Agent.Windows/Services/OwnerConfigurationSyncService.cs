@@ -1,6 +1,4 @@
 using System;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -15,13 +13,6 @@ namespace CloudClipboard.Agent.Windows.Services;
 
 public sealed class OwnerConfigurationSyncService : BackgroundService, IDisposable
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        WriteIndented = false
-    };
-
     private readonly ILogger<OwnerConfigurationSyncService> _logger;
     private readonly ICloudClipboardClient _client;
     private readonly IAgentSettingsStore _settingsStore;
@@ -121,21 +112,21 @@ public sealed class OwnerConfigurationSyncService : BackgroundService, IDisposab
             if (remote is null || string.IsNullOrWhiteSpace(remote.ConfigurationJson))
             {
                 _logger.LogInformation("No remote configuration found for {OwnerId}; uploading local settings.", ownerId);
-                await UploadAsync(CloneOptions(_options.CurrentValue), cancellationToken).ConfigureAwait(false);
+                await UploadAsync(AgentOptionsJson.Clone(_options.CurrentValue), cancellationToken).ConfigureAwait(false);
                 return;
             }
 
-            var remoteOptions = DeserializeOptions(remote.ConfigurationJson);
+            var remoteOptions = AgentOptionsJson.Deserialize(remote.ConfigurationJson);
             if (remoteOptions is null)
             {
                 _logger.LogWarning("Remote configuration for {OwnerId} is invalid JSON; skipping import.", ownerId);
                 return;
             }
 
-            NormalizeOptions(remoteOptions);
+            AgentOptionsJson.Normalize(remoteOptions);
             remoteOptions.OwnerId = ownerId;
 
-            if (AreEquivalent(remoteOptions, _options.CurrentValue))
+            if (AgentOptionsJson.AreEquivalent(remoteOptions, _options.CurrentValue))
             {
                 _logger.LogDebug("Remote configuration already matches local settings for {OwnerId}.", ownerId);
                 return;
@@ -161,8 +152,8 @@ public sealed class OwnerConfigurationSyncService : BackgroundService, IDisposab
 
         try
         {
-            NormalizeOptions(options);
-            var payload = SerializeOptions(options);
+            AgentOptionsJson.Normalize(options);
+            var payload = AgentOptionsJson.Serialize(options);
             await _client.SetOwnerConfigurationAsync(options.OwnerId, payload, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Uploaded configuration for {OwnerId}.", options.OwnerId);
         }
@@ -182,7 +173,7 @@ public sealed class OwnerConfigurationSyncService : BackgroundService, IDisposab
         if (!_initialSyncCompleted)
         {
             // Queue the latest snapshot but let ExecuteAsync finish the remote download first.
-            _uploadQueue.Writer.TryWrite(CloneOptions(options));
+            _uploadQueue.Writer.TryWrite(AgentOptionsJson.Clone(options));
             return;
         }
 
@@ -192,46 +183,11 @@ public sealed class OwnerConfigurationSyncService : BackgroundService, IDisposab
             return;
         }
 
-        if (!_uploadQueue.Writer.TryWrite(CloneOptions(options)))
+        if (!_uploadQueue.Writer.TryWrite(AgentOptionsJson.Clone(options)))
         {
             _logger.LogDebug("Configuration upload queue is full; overwriting pending snapshot.");
         }
     }
-
-    private static void NormalizeOptions(AgentOptions options)
-    {
-        options.PinnedItems ??= new();
-        var defaults = FunctionsDeploymentOptions.CreateDefault();
-        options.FunctionsDeployment ??= defaults;
-        if (string.IsNullOrWhiteSpace(options.FunctionsDeployment.PackagePath))
-        {
-            options.FunctionsDeployment.PackagePath = defaults.PackagePath;
-        }
-    }
-
-    private static AgentOptions? DeserializeOptions(string json)
-    {
-        try
-        {
-            return JsonSerializer.Deserialize<AgentOptions>(json, SerializerOptions);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static string SerializeOptions(AgentOptions options)
-        => JsonSerializer.Serialize(options, SerializerOptions);
-
-    private static AgentOptions CloneOptions(AgentOptions source)
-    {
-        var json = SerializeOptions(source);
-        return JsonSerializer.Deserialize<AgentOptions>(json, SerializerOptions)!;
-    }
-
-    private static bool AreEquivalent(AgentOptions left, AgentOptions right)
-        => string.Equals(SerializeOptions(left), SerializeOptions(right), StringComparison.Ordinal);
 
     public override void Dispose()
     {
