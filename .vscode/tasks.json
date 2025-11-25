@@ -110,6 +110,38 @@
 				"kind": "build",
 				"isDefault": false
 			}
+		},
+		{
+			"label": "publish (agent self-contained)",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"publish",
+				"${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agent.Windows.csproj",
+				"--configuration",
+				"Release",
+				"--runtime",
+				"win-x64",
+				"--self-contained",
+				"true",
+				"/property:PublishSingleFile=true",
+				"/property:PublishTrimmed=false",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "publish (agent framework-dependent)",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"publish",
+				"${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agent.Windows.csproj",
+				"--configuration",
+				"Release"
+			],
+			"problemMatcher": []
 		}
 	]
 }

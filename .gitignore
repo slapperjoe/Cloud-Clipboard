@@ -10,4 +10,3 @@ build/Versioning/bin/*
 build/Versioning/obj/*
 tests/**/bin/*
 tests/**/obj/*
-artifacts/*

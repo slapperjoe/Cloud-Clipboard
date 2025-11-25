@@ -43,6 +43,11 @@ public sealed class SettingsForm : Form
     private readonly TextBox _deployResourceGroupText;
     private readonly TextBox _deploySubscriptionText;
     private readonly TextBox _deployPackagePathText;
+    private readonly TextBox _deployLocationText;
+    private readonly TextBox _deployStorageAccountText;
+    private readonly TextBox _deployPlanText;
+    private readonly TextBox _deployContainerText;
+    private readonly TextBox _deployTableText;
     private readonly Label _statusLabel;
     private bool _initializing;
     private readonly IAppIconProvider _iconProvider;
@@ -177,6 +182,21 @@ public sealed class SettingsForm : Form
 
         _deploySubscriptionText = CreateTextBox();
         AddLabeledControl(fieldsTable, "Subscription Id", "Azure subscription ID that contains the Function App.", _deploySubscriptionText);
+
+        _deployLocationText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Location", "Azure region for provisioning (e.g., eastus).", _deployLocationText);
+
+        _deployStorageAccountText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Storage Account", "Name of the storage account used for payloads and metadata.", _deployStorageAccountText);
+
+        _deployPlanText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Hosting Plan", "Consumption plan name for the Function App.", _deployPlanText);
+
+        _deployContainerText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Blob Container", "Container name for clipboard payloads.", _deployContainerText);
+
+        _deployTableText = CreateTextBox();
+        AddLabeledControl(fieldsTable, "Metadata Table", "Table name for clipboard metadata.", _deployTableText);
 
         _deployPackagePathText = CreateTextBox();
         AddLabeledControl(fieldsTable, "Package Path", "Path to the packaged function zip (defaults next to the agent).", _deployPackagePathText);
@@ -314,6 +334,11 @@ public sealed class SettingsForm : Form
         _deployFunctionAppText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().FunctionAppName = _deployFunctionAppText.Text.Trim());
         _deployResourceGroupText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().ResourceGroup = _deployResourceGroupText.Text.Trim());
         _deploySubscriptionText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().SubscriptionId = _deploySubscriptionText.Text.Trim());
+        _deployLocationText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().Location = _deployLocationText.Text.Trim());
+        _deployStorageAccountText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().StorageAccountName = _deployStorageAccountText.Text.Trim());
+        _deployPlanText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().PlanName = _deployPlanText.Text.Trim());
+        _deployContainerText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().PayloadContainer = _deployContainerText.Text.Trim());
+        _deployTableText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().MetadataTable = _deployTableText.Text.Trim());
         _deployPackagePathText.TextChanged += (_, _) => UpdateOption(() => EnsureDeploymentOptions().PackagePath = _deployPackagePathText.Text.Trim());
     }
 
@@ -340,6 +365,11 @@ public sealed class SettingsForm : Form
         _deployFunctionAppText.Text = deployment.FunctionAppName ?? string.Empty;
         _deployResourceGroupText.Text = deployment.ResourceGroup ?? string.Empty;
         _deploySubscriptionText.Text = deployment.SubscriptionId ?? string.Empty;
+        _deployLocationText.Text = deployment.Location ?? string.Empty;
+        _deployStorageAccountText.Text = deployment.StorageAccountName ?? string.Empty;
+        _deployPlanText.Text = deployment.PlanName ?? string.Empty;
+        _deployContainerText.Text = deployment.PayloadContainer ?? string.Empty;
+        _deployTableText.Text = deployment.MetadataTable ?? string.Empty;
         _deployPackagePathText.Text = deployment.PackagePath ?? string.Empty;
     }
 

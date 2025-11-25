@@ -9,6 +9,11 @@ public sealed class FunctionsDeploymentOptions
     public string ResourceGroup { get; set; } = string.Empty;
     public string SubscriptionId { get; set; } = string.Empty;
     public string PackagePath { get; set; } = GetDefaultPackagePath();
+    public string Location { get; set; } = "eastus";
+    public string StorageAccountName { get; set; } = string.Empty;
+    public string PlanName { get; set; } = string.Empty;
+    public string PayloadContainer { get; set; } = "clipboardpayloads";
+    public string MetadataTable { get; set; } = "ClipboardMetadata";
     public string? LastPackageHash { get; set; }
     public DateTimeOffset? LastDeployedUtc { get; set; }
 

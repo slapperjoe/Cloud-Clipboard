@@ -151,7 +151,10 @@ public sealed class DeployFunctionsForm : Form
             ReadOnly = true,
             Dock = DockStyle.Fill,
             ScrollBars = ScrollBars.Both,
-            Font = new Font(FontFamily.GenericMonospace, 9)
+            Font = new Font("Consolas", 9F),
+            BackColor = Color.Black,
+            ForeColor = Color.LimeGreen,
+            BorderStyle = BorderStyle.FixedSingle
         };
 
         var logGroup = new GroupBox

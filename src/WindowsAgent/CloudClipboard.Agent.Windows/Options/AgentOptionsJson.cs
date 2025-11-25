@@ -38,9 +38,25 @@ internal static class AgentOptionsJson
     {
         options.PinnedItems ??= new();
         options.FunctionsDeployment ??= FunctionsDeploymentOptions.CreateDefault();
+        var deploymentDefaults = FunctionsDeploymentOptions.CreateDefault();
         if (string.IsNullOrWhiteSpace(options.FunctionsDeployment.PackagePath))
         {
-            options.FunctionsDeployment.PackagePath = FunctionsDeploymentOptions.CreateDefault().PackagePath;
+            options.FunctionsDeployment.PackagePath = deploymentDefaults.PackagePath;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.FunctionsDeployment.Location))
+        {
+            options.FunctionsDeployment.Location = deploymentDefaults.Location;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.FunctionsDeployment.PayloadContainer))
+        {
+            options.FunctionsDeployment.PayloadContainer = deploymentDefaults.PayloadContainer;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.FunctionsDeployment.MetadataTable))
+        {
+            options.FunctionsDeployment.MetadataTable = deploymentDefaults.MetadataTable;
         }
     }
 
