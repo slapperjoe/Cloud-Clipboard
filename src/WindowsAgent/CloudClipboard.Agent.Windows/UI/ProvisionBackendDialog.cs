@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -452,7 +455,7 @@ public sealed class ProvisionBackendDialog : Form
             var storageAccountName = _storageAccountText.Text.Trim().ToLowerInvariant();
             var functionAppName = _functionAppText.Text.Trim();
 
-            var availabilityError = await CheckAzureNameAvailabilityAsync(storageAccountName, functionAppName);
+            var availabilityError = await CheckAzureNameAvailabilityAsync(storageAccountName, functionAppName, _cancellationToken);
             if (!string.IsNullOrEmpty(availabilityError))
             {
                 _errorLabel.Text = availabilityError;
@@ -554,73 +557,135 @@ public sealed class ProvisionBackendDialog : Form
         return true;
     }
 
-    private async Task<string?> CheckAzureNameAvailabilityAsync(string storageAccountName, string functionAppName)
+    private async Task<string?> CheckAzureNameAvailabilityAsync(string storageAccountName, string functionAppName, CancellationToken cancellationToken)
     {
         if (!AzureCliLocator.TryResolveExecutable(out var azPath, out var azError))
         {
             return $"Azure CLI not available: {azError}";
         }
 
-        // Check storage account name availability
-        var storageCheckResult = await RunAzCommandAsync(azPath, $"storage account check-name --name {storageAccountName} --query nameAvailable -o tsv");
-        if (storageCheckResult.ExitCode == 0 && storageCheckResult.Output.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
+        var token = timeoutCts.Token;
+
+        // Check storage account name availability (simple tsv response)
+        var storageCheckResult = await RunAzCommandAsync(azPath, $"storage account check-name --name {storageAccountName} --query nameAvailable -o tsv", token).ConfigureAwait(false);
+        if (storageCheckResult.ExitCode != 0)
+        {
+            return BuildCliError("Storage account availability check failed.", storageCheckResult);
+        }
+
+        if (storageCheckResult.StandardOutput.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
         {
             return $"Storage account name '{storageAccountName}' is already taken globally. Please choose a different name.";
         }
 
-        // Check function app name availability
-        var functionCheckResult = await RunAzCommandAsync(azPath, $"webapp list --query \"[?name=='{functionAppName}'].name\" -o tsv");
-        if (functionCheckResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(functionCheckResult.Output.Trim()))
+        // Check function app name availability (JSON payload)
+        var functionCheckResult = await RunAzCommandAsync(azPath, $"functionapp check-name --name \"{functionAppName}\" --output json", token).ConfigureAwait(false);
+        if (functionCheckResult.ExitCode != 0 || string.IsNullOrWhiteSpace(functionCheckResult.StandardOutput))
         {
-            return $"Function app name '{functionAppName}' is already taken globally. Please choose a different name.";
+            return BuildCliError("Function App name availability check failed.", functionCheckResult);
         }
 
-        return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(functionCheckResult.StandardOutput);
+            var nameAvailable = doc.RootElement.TryGetProperty("nameAvailable", out var availableProp) && availableProp.GetBoolean();
+            if (nameAvailable)
+            {
+                return null;
+            }
+
+            var message = doc.RootElement.TryGetProperty("message", out var messageProp) ? messageProp.GetString() : null;
+            var reason = doc.RootElement.TryGetProperty("reason", out var reasonProp) ? reasonProp.GetString() : null;
+            var detail = !string.IsNullOrWhiteSpace(message)
+                ? message
+                : $"Function app name '{functionAppName}' is already taken globally.";
+            if (!string.IsNullOrWhiteSpace(reason))
+            {
+                detail = $"{detail} ({reason})";
+            }
+
+            return detail;
+        }
+        catch (JsonException ex)
+        {
+            return $"Unable to parse Azure CLI response: {ex.Message}";
+        }
     }
 
-    private async Task<(int ExitCode, string Output)> RunAzCommandAsync(string azPath, string arguments)
+    private static string BuildCliError(string prefix, AzCliResult result)
     {
-        var tcs = new TaskCompletionSource<(int, string)>();
-        
-        var process = new System.Diagnostics.Process
+        var detail = !string.IsNullOrWhiteSpace(result.StandardError)
+            ? result.StandardError.Trim()
+            : (!string.IsNullOrWhiteSpace(result.StandardOutput) ? result.StandardOutput.Trim() : string.Empty);
+        return string.IsNullOrWhiteSpace(detail) ? prefix : $"{prefix} {detail}";
+    }
+
+    private async Task<AzCliResult> RunAzCommandAsync(string azPath, string arguments, CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
         {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = azPath,
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            },
-            EnableRaisingEvents = true
+            FileName = azPath,
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
         };
 
-        var output = new System.Text.StringBuilder();
+        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = false };
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
+
         process.OutputDataReceived += (_, e) =>
         {
             if (!string.IsNullOrEmpty(e.Data))
             {
-                output.AppendLine(e.Data);
+                stdout.AppendLine(e.Data);
             }
         };
-
-        process.Exited += (_, _) =>
+        process.ErrorDataReceived += (_, e) =>
         {
-            tcs.TrySetResult((process.ExitCode, output.ToString()));
-            process.Dispose();
+            if (!string.IsNullOrEmpty(e.Data))
+            {
+                stderr.AppendLine(e.Data);
+            }
         };
 
         if (!process.Start())
         {
-            return (-1, string.Empty);
+            throw new InvalidOperationException("Failed to start Azure CLI process.");
         }
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        return await tcs.Task.ConfigureAwait(false);
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            throw;
+        }
+
+        return new AzCliResult(process.ExitCode, stdout.ToString(), stderr.ToString());
     }
+
+    private sealed record AzCliResult(int ExitCode, string StandardOutput, string StandardError);
 
     private FunctionsDeploymentOptions BuildOptions()
     {

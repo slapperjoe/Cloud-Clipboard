@@ -312,13 +312,35 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
         }
 
         // Check global name availability before attempting to create
-        var checkArgs = $"webapp list --query \"[?name=='{deployment.FunctionAppName}'].name\" -o tsv";
+        var checkArgs = $"functionapp check-name --name \"{deployment.FunctionAppName}\" --output json";
         var checkResult = await RunAzAsync(azPath, checkArgs, captureOutput: true, cancellationToken).ConfigureAwait(false);
-        if (checkResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(checkResult.StandardOutput.Trim()))
+        if (checkResult.ExitCode != 0 || string.IsNullOrWhiteSpace(checkResult.StandardOutput))
         {
-            var errorMessage = $"The function app name '{deployment.FunctionAppName}' is already taken globally. Please choose a different name.";
-            progress?.Report($"ERROR: {errorMessage}");
-            throw new InvalidOperationException(errorMessage);
+            var cliError = !string.IsNullOrWhiteSpace(checkResult.StandardError)
+                ? checkResult.StandardError.Trim()
+                : "Function App name availability check failed.";
+            progress?.Report($"ERROR: {cliError}");
+            throw new InvalidOperationException(cliError);
+        }
+
+        using (var doc = JsonDocument.Parse(checkResult.StandardOutput))
+        {
+            var nameAvailable = doc.RootElement.TryGetProperty("nameAvailable", out var availableProp) && availableProp.GetBoolean();
+            if (!nameAvailable)
+            {
+                var message = doc.RootElement.TryGetProperty("message", out var messageProp) ? messageProp.GetString() : null;
+                var reason = doc.RootElement.TryGetProperty("reason", out var reasonProp) ? reasonProp.GetString() : null;
+                var errorMessage = !string.IsNullOrWhiteSpace(message)
+                    ? message
+                    : $"The function app name '{deployment.FunctionAppName}' is already taken globally.";
+                if (!string.IsNullOrWhiteSpace(reason))
+                {
+                    errorMessage = $"{errorMessage} ({reason})";
+                }
+
+                progress?.Report($"ERROR: {errorMessage}");
+                throw new InvalidOperationException(errorMessage);
+            }
         }
 
         var createArgs = $"functionapp create --name \"{deployment.FunctionAppName}\" --resource-group \"{deployment.ResourceGroup}\" --storage-account {deployment.StorageAccountName} --consumption-plan-location \"{deployment.Location}\" --functions-version 4 --runtime dotnet-isolated --os-type Windows";
