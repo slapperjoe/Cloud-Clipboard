@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -26,6 +27,11 @@ public sealed class FirstRunConfigurationService : BackgroundService
     private readonly IBackendProvisioningService _provisioningService;
     private readonly IOptionsMonitor<AgentOptions> _options;
     private readonly IAppIconProvider _iconProvider;
+
+    private sealed record ProvisioningMetadata(
+        IReadOnlyList<AzureSubscriptionInfo> Subscriptions,
+        IReadOnlyList<AzureLocationInfo> Locations,
+        string? SubscriptionId);
 
     public FirstRunConfigurationService(
         ILogger<FirstRunConfigurationService> logger,
@@ -161,15 +167,32 @@ public sealed class FirstRunConfigurationService : BackgroundService
 
         IReadOnlyList<AzureSubscriptionInfo> subscriptions = Array.Empty<AzureSubscriptionInfo>();
         IReadOnlyList<AzureLocationInfo> locations = Array.Empty<AzureLocationInfo>();
+        var indicatorIcon = _iconProvider.GetIcon(32) ?? SystemIcons.Application;
         try
         {
-            subscriptions = await _metadataProvider.GetSubscriptionsAsync(cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(initialSubscriptionId) && subscriptions.Count > 0)
+            var metadata = await MetadataLoadingDialog.RunAsync(async (dialog, token) =>
             {
-                initialSubscriptionId = subscriptions.FirstOrDefault(s => s.IsDefault)?.Id ?? subscriptions[0].Id;
-            }
+                dialog.UpdateStatus("Loading Azure subscriptions via Azure CLI...");
+                var loadedSubscriptions = await _metadataProvider.GetSubscriptionsAsync(token).ConfigureAwait(true);
+                var resolvedSubscriptionId = initialSubscriptionId;
+                if (string.IsNullOrWhiteSpace(resolvedSubscriptionId) && loadedSubscriptions.Count > 0)
+                {
+                    resolvedSubscriptionId = loadedSubscriptions.FirstOrDefault(s => s.IsDefault)?.Id ?? loadedSubscriptions[0].Id;
+                }
 
-            locations = await _metadataProvider.GetLocationsAsync(initialSubscriptionId, cancellationToken).ConfigureAwait(false);
+                dialog.UpdateStatus("Loading Azure regions for provisioning...");
+                IReadOnlyList<AzureLocationInfo> loadedLocations = Array.Empty<AzureLocationInfo>();
+                if (!string.IsNullOrWhiteSpace(resolvedSubscriptionId))
+                {
+                    loadedLocations = await _metadataProvider.GetLocationsAsync(resolvedSubscriptionId, token).ConfigureAwait(true);
+                }
+
+                return new ProvisioningMetadata(loadedSubscriptions, loadedLocations, resolvedSubscriptionId);
+            }, indicatorIcon, cancellationToken).ConfigureAwait(false);
+
+            subscriptions = metadata.Subscriptions;
+            locations = metadata.Locations;
+            initialSubscriptionId = metadata.SubscriptionId;
         }
         catch (OperationCanceledException)
         {
@@ -202,10 +225,9 @@ public sealed class FirstRunConfigurationService : BackgroundService
                 using var dialog = new ProvisioningProgressDialog();
                 dialog.SetIcon(_iconProvider.GetIcon(32));
 
-                var combinedProgress = new Progress<string>(message =>
+                var combinedProgress = new Progress<ProvisioningProgressUpdate>(update =>
                 {
-                    dialog.AppendLog(message);
-                    dialog.UpdateStatus(message);
+                    dialog.ApplyProgress(update);
                 });
 
                 using var registration = cancellationToken.Register(() =>
@@ -220,6 +242,7 @@ public sealed class FirstRunConfigurationService : BackgroundService
                 {
                     try
                     {
+                        dialog.SetBusyState(true, "Provisioning backend...");
                         var result = await _provisioningService.ProvisionAsync(request, combinedProgress, cancellationToken).ConfigureAwait(true);
                         dialog.MarkComplete(result.Succeeded, result.ErrorMessage);
                         tcs.TrySetResult(result);

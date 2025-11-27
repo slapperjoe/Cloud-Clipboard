@@ -1,12 +1,28 @@
+using System.Threading;
+using System.Windows.Forms;
 using CloudClipboard.Agent.Windows;
 using CloudClipboard.Agent.Windows.Configuration;
 using CloudClipboard.Agent.Windows.Options;
 using CloudClipboard.Agent.Windows.Services;
 using CloudClipboard.Agent.Windows.UI;
 using CloudClipboard.Core.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+
+const string SingleInstanceMutexName = "Global\\CloudClipboardAgent";
+
+using var singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var createdNew);
+if (!createdNew)
+{
+	MessageBox.Show(
+		"Cloud Clipboard Agent is already running.",
+		"Cloud Clipboard",
+		MessageBoxButtons.OK,
+		MessageBoxIcon.Information);
+	return;
+}
 
 DpiAwareness.Initialize();
 
@@ -38,13 +54,21 @@ builder.Services.AddSingleton<IPinnedClipboardStore, PinnedClipboardStore>();
 builder.Services.AddSingleton<IAgentDiagnostics, AgentDiagnostics>();
 builder.Services.AddSingleton<IAppIconProvider, AppIconProvider>();
 builder.Services.AddSingleton<ILocalUploadTracker, LocalUploadTracker>();
+builder.Services.AddSingleton<ISetupActivityMonitor, SetupActivityMonitor>();
 builder.Services.AddSingleton<IFunctionsDeploymentService, FunctionsDeploymentService>();
 builder.Services.AddSingleton<IBackendProvisioningService, BackendProvisioningService>();
+builder.Services.AddSingleton<IAzureCliInstaller, AzureCliInstaller>();
+builder.Services.AddSingleton<IAzureCliDeviceLoginPrompt, AzureCliDeviceLoginPrompt>();
 builder.Services.AddSingleton<IAzureCliAuthenticator, AzureCliAuthenticator>();
 builder.Services.AddSingleton<IAzureCliMetadataProvider, AzureCliMetadataProvider>();
 builder.Services.AddSingleton<ClipboardPayloadSerializer>();
 builder.Services.AddSingleton<ClipboardPasteService>();
-builder.Services.AddHttpClient<ICloudClipboardClient, HttpCloudClipboardClient>();
+builder.Services.AddHttpClient<HttpCloudClipboardClient>();
+builder.Services.AddSingleton<ICloudClipboardClient>(sp =>
+{
+	var inner = sp.GetRequiredService<HttpCloudClipboardClient>();
+	return ActivatorUtilities.CreateInstance<SetupAwareCloudClipboardClient>(sp, inner);
+});
 builder.Services.AddHttpClient("CloudClipboard.Provisioning");
 builder.Services.AddHostedService<FirstRunConfigurationService>();
 builder.Services.AddHostedService<OwnerConfigurationSyncService>();
@@ -56,4 +80,4 @@ builder.Services.AddHostedService<ClipboardPushListener>();
 builder.Services.AddHostedService<TrayIconHostedService>();
 
 var host = builder.Build();
-host.Run();
+await host.RunAsync();

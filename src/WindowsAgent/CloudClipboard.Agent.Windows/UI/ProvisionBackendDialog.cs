@@ -25,6 +25,7 @@ public sealed class ProvisionBackendDialog : Form
     private readonly TextBox _containerText;
     private readonly TextBox _tableText;
     private readonly TextBox _packagePathText;
+    private readonly RichTextBox _logTextBox;
     private readonly Button _browseButton;
     private readonly Button _provisionButton;
     private readonly Label _errorLabel;
@@ -57,10 +58,11 @@ public sealed class ProvisionBackendDialog : Form
         Text = "Provision Cloud Clipboard Backend";
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
-        Width = 640;
-        Height = 720;
+        ClientSize = new Size(1120,1100);
+        MinimumSize = new Size(1024, 1040);
         MinimizeBox = false;
         MaximizeBox = false;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
         ShowIcon = true;
         Icon = _iconProvider.GetIcon(32);
 
@@ -70,7 +72,7 @@ public sealed class ProvisionBackendDialog : Form
             ColumnCount = 3,
             RowCount = 0,
             Padding = new Padding(16),
-            AutoSize = true,
+            AutoSize = false,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
@@ -155,6 +157,36 @@ public sealed class ProvisionBackendDialog : Form
         layout.Controls.Add(_errorLabel, 0, layout.RowCount);
         layout.SetColumnSpan(_errorLabel, 3);
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowCount++;
+
+        _logTextBox = new RichTextBox
+        {
+            Multiline = true,
+            ReadOnly = true,
+            DetectUrls = false,
+            ShortcutsEnabled = false,
+            Dock = DockStyle.Fill,
+            Font = new Font("Consolas", 9F),
+            BackColor = Color.Black,
+            ForeColor = Color.LimeGreen,
+            BorderStyle = BorderStyle.FixedSingle,
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            WordWrap = false,
+            MinimumSize = new Size(0, 260)
+        };
+
+        var logGroup = new GroupBox
+        {
+            Text = "Azure CLI Output",
+            Dock = DockStyle.Fill,
+            Padding = new Padding(8),
+            Margin = new Padding(0, 0, 0, 8),
+            MinimumSize = new Size(0, 300)
+        };
+        logGroup.Controls.Add(_logTextBox);
+        layout.Controls.Add(logGroup, 0, layout.RowCount);
+        layout.SetColumnSpan(logGroup, 3);
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowCount++;
 
         var buttonsPanel = new FlowLayoutPanel
@@ -385,8 +417,12 @@ public sealed class ProvisionBackendDialog : Form
         }
 
         var preferredLocation = GetLocationText();
-        _locationRefreshCts?.Cancel();
-        _locationRefreshCts?.Dispose();
+        if (_locationRefreshCts is not null)
+        {
+            await _locationRefreshCts.CancelAsync();
+            _locationRefreshCts.Dispose();
+        }
+
         _locationRefreshCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationToken);
         var token = _locationRefreshCts.Token;
 
@@ -449,6 +485,7 @@ public sealed class ProvisionBackendDialog : Form
         _provisionButton.Enabled = false;
         _errorLabel.Text = "Checking name availability...";
         _errorLabel.ForeColor = Color.DarkOrange;
+        AppendLog("Starting Azure resource name availability checks...");
 
         try
         {
@@ -460,17 +497,20 @@ public sealed class ProvisionBackendDialog : Form
             {
                 _errorLabel.Text = availabilityError;
                 _errorLabel.ForeColor = Color.Firebrick;
+                AppendLog(availabilityError, isError: true);
                 _provisionButton.Enabled = true;
                 return;
             }
 
             _errorLabel.Text = string.Empty;
+            AppendLog("Name availability confirmed. Proceeding with provisioning.");
             CloseWithResult(DialogResult.OK);
         }
         catch (Exception ex)
         {
             _errorLabel.Text = $"Failed to check availability: {ex.Message}";
             _errorLabel.ForeColor = Color.Firebrick;
+            AppendLog($"Failed to check availability: {ex.Message}", isError: true);
             _provisionButton.Enabled = true;
         }
     }
@@ -561,30 +601,42 @@ public sealed class ProvisionBackendDialog : Form
     {
         if (!AzureCliLocator.TryResolveExecutable(out var azPath, out var azError))
         {
-            return $"Azure CLI not available: {azError}";
+            var message = $"Azure CLI not available: {azError}";
+            AppendLog(message, isError: true);
+            return message;
         }
+
+        AppendLog($"Using Azure CLI at '{azPath}' to validate names...");
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
         var token = timeoutCts.Token;
 
-        // Check storage account name availability (simple tsv response)
+        AppendLog($"Running storage account availability check for '{storageAccountName}'...");
         var storageCheckResult = await RunAzCommandAsync(azPath, $"storage account check-name --name {storageAccountName} --query nameAvailable -o tsv", token).ConfigureAwait(false);
+        LogResult("storage account check-name", storageCheckResult);
         if (storageCheckResult.ExitCode != 0)
         {
-            return BuildCliError("Storage account availability check failed.", storageCheckResult);
+            var error = BuildCliError("Storage account availability check failed.", storageCheckResult);
+            AppendLog(error, isError: true);
+            return error;
         }
 
         if (storageCheckResult.StandardOutput.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
         {
-            return $"Storage account name '{storageAccountName}' is already taken globally. Please choose a different name.";
+            var message = $"Storage account name '{storageAccountName}' is already taken globally. Please choose a different name.";
+            AppendLog(message, isError: true);
+            return message;
         }
 
-        // Check function app name availability (JSON payload)
+        AppendLog($"Running Function App availability check for '{functionAppName}'...");
         var functionCheckResult = await RunAzCommandAsync(azPath, $"functionapp check-name --name \"{functionAppName}\" --output json", token).ConfigureAwait(false);
+        LogResult("functionapp check-name", functionCheckResult);
         if (functionCheckResult.ExitCode != 0 || string.IsNullOrWhiteSpace(functionCheckResult.StandardOutput))
         {
-            return BuildCliError("Function App name availability check failed.", functionCheckResult);
+            var error = BuildCliError("Function App name availability check failed.", functionCheckResult);
+            AppendLog(error, isError: true);
+            return error;
         }
 
         try
@@ -593,6 +645,7 @@ public sealed class ProvisionBackendDialog : Form
             var nameAvailable = doc.RootElement.TryGetProperty("nameAvailable", out var availableProp) && availableProp.GetBoolean();
             if (nameAvailable)
             {
+                AppendLog("Azure CLI reports both names are available.");
                 return null;
             }
 
@@ -606,19 +659,48 @@ public sealed class ProvisionBackendDialog : Form
                 detail = $"{detail} ({reason})";
             }
 
+            AppendLog(detail, isError: true);
             return detail;
         }
         catch (JsonException ex)
         {
-            return $"Unable to parse Azure CLI response: {ex.Message}";
+            var message = $"Unable to parse Azure CLI response: {ex.Message}";
+            AppendLog(message, isError: true);
+            return message;
+        }
+
+        void LogResult(string action, AzCliResult result)
+        {
+            AppendLog($"{action} exited with code {result.ExitCode}.");
+
+            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+            {
+                AppendLog(result.StandardOutput.Trim());
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.StandardError))
+            {
+                AppendLog(result.StandardError.Trim(), isError: true);
+            }
         }
     }
 
     private static string BuildCliError(string prefix, AzCliResult result)
     {
-        var detail = !string.IsNullOrWhiteSpace(result.StandardError)
-            ? result.StandardError.Trim()
-            : (!string.IsNullOrWhiteSpace(result.StandardOutput) ? result.StandardOutput.Trim() : string.Empty);
+        string detail;
+        if (!string.IsNullOrWhiteSpace(result.StandardError))
+        {
+            detail = result.StandardError.Trim();
+        }
+        else if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+        {
+            detail = result.StandardOutput.Trim();
+        }
+        else
+        {
+            detail = string.Empty;
+        }
+
         return string.IsNullOrWhiteSpace(detail) ? prefix : $"{prefix} {detail}";
     }
 
@@ -704,6 +786,30 @@ public sealed class ProvisionBackendDialog : Form
             PayloadContainer = _containerText.Text.Trim(),
             MetadataTable = _tableText.Text.Trim()
         };
+    }
+
+    private void AppendLog(string message, bool isError = false)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => AppendLog(message, isError)));
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        if (_logTextBox.TextLength > 0)
+        {
+            _logTextBox.AppendText(Environment.NewLine);
+        }
+
+        var prefix = isError ? "[stderr]" : "[info]";
+        _logTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {prefix} {message}");
+        _logTextBox.SelectionStart = _logTextBox.TextLength;
+        _logTextBox.ScrollToCaret();
     }
 
     private string GetSubscriptionText()
