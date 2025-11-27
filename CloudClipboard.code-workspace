@@ -11,9 +11,14 @@
     {
       "name": "Windows Agent",
       "path": "src/WindowsAgent/CloudClipboard.Agent.Windows"
+    },
+    {
+      "name": "Clipboard Tests",
+      "path": "tests"
     }
   ],
   "settings": {
-    "dotnet.defaultSolution": "CloudClipboard.sln"
+    "dotnet.defaultSolution": "CloudClipboard.sln",
+    "debug.internalConsoleOptions": "neverOpen"
   }
 }

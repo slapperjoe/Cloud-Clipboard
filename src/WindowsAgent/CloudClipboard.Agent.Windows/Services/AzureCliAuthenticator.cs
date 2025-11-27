@@ -1,6 +1,4 @@
 using System;
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,18 +16,30 @@ public sealed record AzureCliPrincipal(string LoginName, string? UserType, strin
 public sealed class AzureCliAuthenticator : IAzureCliAuthenticator
 {
     private readonly ILogger<AzureCliAuthenticator> _logger;
+    private readonly IAzureCliInstaller _installer;
+    private readonly IAzureCliDeviceLoginPrompt _loginPrompt;
 
-    public AzureCliAuthenticator(ILogger<AzureCliAuthenticator> logger)
+    public AzureCliAuthenticator(
+        ILogger<AzureCliAuthenticator> logger,
+        IAzureCliInstaller installer,
+        IAzureCliDeviceLoginPrompt loginPrompt)
     {
         _logger = logger;
+        _installer = installer;
+        _loginPrompt = loginPrompt;
     }
 
     public async Task<AzureCliPrincipal?> EnsureLoginAsync(CancellationToken cancellationToken)
     {
         if (!AzureCliLocator.TryResolveExecutable(out var azPath, out var error))
         {
-            _logger.LogWarning("Azure CLI not found. Install Azure CLI and sign in before running the agent. {Error}", error);
-            return null;
+            _logger.LogWarning("Azure CLI not found: {Error}", error);
+            var installed = await _installer.EnsureInstalledAsync(cancellationToken).ConfigureAwait(false);
+            if (!installed || !AzureCliLocator.TryResolveExecutable(out azPath, out error))
+            {
+                _logger.LogWarning("Azure CLI installation is required before continuing. {Error}", error);
+                return null;
+            }
         }
 
         var account = await TryGetAccountAsync(azPath, cancellationToken).ConfigureAwait(false);
@@ -38,12 +48,11 @@ public sealed class AzureCliAuthenticator : IAzureCliAuthenticator
             return account;
         }
 
-        _logger.LogInformation("Azure CLI login required. Launching device code flow...");
-        var loginResult = await RunProcessAsync(azPath, "login --use-device-code --output json", captureOutput: true, cancellationToken).ConfigureAwait(false);
-        LogProcessOutput("az login", loginResult);
-        if (loginResult.ExitCode != 0)
+        _logger.LogInformation("Azure CLI login required. Opening Cloud Clipboard login dialog...");
+        var loginCompleted = await _loginPrompt.PromptAsync(azPath, cancellationToken).ConfigureAwait(false);
+        if (!loginCompleted)
         {
-            _logger.LogWarning("Azure CLI login failed with exit code {ExitCode}.", loginResult.ExitCode);
+            _logger.LogWarning("Azure CLI login was cancelled or failed.");
             return null;
         }
 
@@ -52,7 +61,7 @@ public sealed class AzureCliAuthenticator : IAzureCliAuthenticator
 
     private async Task<AzureCliPrincipal?> TryGetAccountAsync(string azPath, CancellationToken cancellationToken)
     {
-        var result = await RunProcessAsync(azPath, "account show --output json", captureOutput: true, cancellationToken).ConfigureAwait(false);
+        var result = await AzureCliProcessRunner.RunAsync(azPath, "account show --output json", captureOutput: true, onLine: null, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
             _logger.LogDebug("az account show exited with {ExitCode}.", result.ExitCode);
@@ -94,98 +103,4 @@ public sealed class AzureCliAuthenticator : IAzureCliAuthenticator
         }
     }
 
-    private void LogProcessOutput(string command, ProcessResult result)
-    {
-        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
-        {
-            foreach (var line in result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-            {
-                _logger.LogInformation("{Command}: {Line}", command, line);
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(result.StandardError))
-        {
-            foreach (var line in result.StandardError.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-            {
-                _logger.LogInformation("{Command} (stderr): {Line}", command, line);
-            }
-        }
-    }
-
-    private static async Task<ProcessResult> RunProcessAsync(string fileName, string arguments, bool captureOutput, CancellationToken cancellationToken)
-    {
-        var output = captureOutput ? new StringBuilder() : null;
-        var error = captureOutput ? new StringBuilder() : null;
-
-        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = arguments,
-                RedirectStandardOutput = captureOutput,
-                RedirectStandardError = captureOutput,
-                UseShellExecute = !captureOutput,
-                CreateNoWindow = captureOutput
-            },
-            EnableRaisingEvents = true
-        };
-
-        if (captureOutput)
-        {
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
-                {
-                    output!.AppendLine(e.Data);
-                }
-            };
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
-                {
-                    error!.AppendLine(e.Data);
-                }
-            };
-        }
-
-        process.Exited += (_, _) =>
-        {
-            tcs.TrySetResult(process.ExitCode);
-            process.Dispose();
-        };
-
-        if (!process.Start())
-        {
-            throw new InvalidOperationException($"Unable to start process '{fileName}'.");
-        }
-
-        if (captureOutput)
-        {
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-        }
-
-        using var registration = cancellationToken.Register(() =>
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(true);
-                }
-            }
-            catch
-            {
-                // ignore cleanup failures
-            }
-        });
-
-        var exitCode = await tcs.Task.ConfigureAwait(false);
-        return new ProcessResult(exitCode, output?.ToString(), error?.ToString());
-    }
-
-    private sealed record ProcessResult(int ExitCode, string? StandardOutput, string? StandardError);
 }

@@ -23,10 +23,12 @@ public sealed record FunctionsDeploymentResult(bool Succeeded, string? ErrorMess
 public sealed class FunctionsDeploymentService : IFunctionsDeploymentService
 {
     private readonly ILogger<FunctionsDeploymentService> _logger;
+    private readonly IAzureCliInstaller _cliInstaller;
 
-    public FunctionsDeploymentService(ILogger<FunctionsDeploymentService> logger)
+    public FunctionsDeploymentService(ILogger<FunctionsDeploymentService> logger, IAzureCliInstaller cliInstaller)
     {
         _logger = logger;
+        _cliInstaller = cliInstaller;
     }
 
     public async Task<FunctionsDeploymentResult> DeployAsync(FunctionsDeploymentRequest request, IProgress<string>? progress, CancellationToken cancellationToken)
@@ -55,7 +57,12 @@ public sealed class FunctionsDeploymentService : IFunctionsDeploymentService
         if (!AzureCliLocator.TryResolveExecutable(out var azPath, out var azError))
         {
             progress?.Report(azError ?? "Azure CLI not found");
-            return new(false, azError);
+            var ensured = await _cliInstaller.EnsureInstalledAsync(cancellationToken).ConfigureAwait(false);
+            if (!ensured || !AzureCliLocator.TryResolveExecutable(out azPath, out azError))
+            {
+                return new(false, azError);
+            }
+            progress?.Report("Azure CLI detected. Continuing deployment...");
         }
 
         try

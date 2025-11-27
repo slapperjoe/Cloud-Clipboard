@@ -3,12 +3,13 @@ using System.Drawing;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using CloudClipboard.Agent.Windows.Services;
 
 namespace CloudClipboard.Agent.Windows.UI;
 
 public sealed class ProvisioningProgressDialog : Form
 {
-    private readonly TextBox _logTextBox;
+    private readonly RichTextBox _logTextBox;
     private readonly ProgressBar _progressBar;
     private readonly Label _statusLabel;
     private readonly Button _closeButton;
@@ -19,8 +20,8 @@ public sealed class ProvisioningProgressDialog : Form
         Text = "Provisioning Cloud Clipboard Backend";
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
-        Width = 700;
-        Height = 500;
+        ClientSize = new Size(1024, 660);
+        MinimumSize = new Size(980, 600);
         MinimizeBox = false;
         MaximizeBox = false;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -49,24 +50,26 @@ public sealed class ProvisioningProgressDialog : Form
         };
         layout.Controls.Add(_statusLabel, 0, 0);
 
-        _logTextBox = new TextBox
+        _logTextBox = new RichTextBox
         {
             Multiline = true,
             ReadOnly = true,
-            ScrollBars = ScrollBars.Vertical,
+            DetectUrls = false,
+            ShortcutsEnabled = false,
             Dock = DockStyle.Fill,
             Font = new Font("Consolas", 9F),
             BackColor = Color.Black,
             ForeColor = Color.LimeGreen,
-            BorderStyle = BorderStyle.FixedSingle
+            BorderStyle = BorderStyle.FixedSingle,
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            WordWrap = false
         };
         layout.Controls.Add(_logTextBox, 0, 1);
 
         _progressBar = new ProgressBar
         {
             Dock = DockStyle.Fill,
-            Style = ProgressBarStyle.Marquee,
-            MarqueeAnimationSpeed = 30,
+            Style = ProgressBarStyle.Continuous,
             Height = 24,
             Margin = new Padding(0, 8, 0, 8)
         };
@@ -124,14 +127,59 @@ public sealed class ProvisioningProgressDialog : Form
             return;
         }
 
-        if (_logTextBox.Text.Length > 0)
+        AppendLogInternal(message);
+    }
+
+    public void ApplyProgress(ProvisioningProgressUpdate update)
+    {
+        if (InvokeRequired)
         {
-            _logTextBox.AppendText(Environment.NewLine);
+            BeginInvoke(new Action(() => ApplyProgress(update)));
+            return;
         }
 
-        _logTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}");
-        _logTextBox.SelectionStart = _logTextBox.Text.Length;
-        _logTextBox.ScrollToCaret();
+        AppendLogInternal(update.Message);
+
+        if (!update.IsVerbose && !string.IsNullOrWhiteSpace(update.Message))
+        {
+            _statusLabel.Text = update.Message;
+        }
+
+        if (update.PercentComplete.HasValue)
+        {
+            var percent = (int)Math.Clamp(Math.Round(update.PercentComplete.Value), 0, 100);
+            _progressBar.Style = ProgressBarStyle.Continuous;
+            _progressBar.MarqueeAnimationSpeed = 0;
+            var bounded = Math.Min(_progressBar.Maximum, Math.Max(_progressBar.Minimum, percent));
+            _progressBar.Value = bounded;
+        }
+    }
+
+    public void SetBusyState(bool busy, string? status = null)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => SetBusyState(busy, status)));
+            return;
+        }
+
+        if (busy)
+        {
+            _progressBar.Style = ProgressBarStyle.Marquee;
+            _progressBar.MarqueeAnimationSpeed = 30;
+            _progressBar.Value = 0;
+        }
+        else
+        {
+            _progressBar.Style = ProgressBarStyle.Continuous;
+            _progressBar.MarqueeAnimationSpeed = 0;
+            _progressBar.Value = _progressBar.Maximum;
+        }
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            _statusLabel.Text = status;
+        }
     }
 
     public void MarkComplete(bool success, string? finalMessage = null)
@@ -144,6 +192,7 @@ public sealed class ProvisioningProgressDialog : Form
 
         _isComplete = true;
         _progressBar.Style = ProgressBarStyle.Continuous;
+        _progressBar.MarqueeAnimationSpeed = 0;
         _progressBar.Value = success ? _progressBar.Maximum : 0;
         _closeButton.Enabled = true;
 
@@ -175,5 +224,22 @@ public sealed class ProvisioningProgressDialog : Form
                 e.Cancel = true;
             }
         }
+    }
+
+    private void AppendLogInternal(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        if (_logTextBox.Text.Length > 0)
+        {
+            _logTextBox.AppendText(Environment.NewLine);
+        }
+
+        _logTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}");
+        _logTextBox.SelectionStart = _logTextBox.Text.Length;
+        _logTextBox.ScrollToCaret();
     }
 }

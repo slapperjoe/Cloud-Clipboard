@@ -14,7 +14,7 @@ namespace CloudClipboard.Agent.Windows.Services;
 
 public interface IBackendProvisioningService
 {
-    Task<BackendProvisioningResult> ProvisionAsync(BackendProvisioningRequest request, IProgress<string>? progress, CancellationToken cancellationToken);
+    Task<BackendProvisioningResult> ProvisionAsync(BackendProvisioningRequest request, IProgress<ProvisioningProgressUpdate>? progress, CancellationToken cancellationToken);
 }
 
 public sealed record BackendProvisioningRequest(string OwnerId, FunctionsDeploymentOptions DeploymentOptions);
@@ -26,18 +26,52 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
     private readonly ILogger<BackendProvisioningService> _logger;
     private readonly IFunctionsDeploymentService _deploymentService;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISetupActivityMonitor _activityMonitor;
+
+    private const double CliCheckPercent = 5;
+    private const double PackageValidatedPercent = 10;
+    private const double LoginVerifiedPercent = 20;
+    private const double NamingReadyPercent = 25;
+    private const double ResourceGroupPercent = 35;
+    private const double StorageAccountPercent = 45;
+    private const double ConnectionStringPercent = 50;
+    private const double FunctionAppPercent = 65;
+    private const double SettingsPercent = 75;
+    private const double DeploymentStartedPercent = 85;
+    private const double DeploymentCompletePercent = 90;
+    private const double KeysPercent = 95;
+    private const double ConfigurationSeedPercent = 100;
 
     public BackendProvisioningService(
         ILogger<BackendProvisioningService> logger,
         IFunctionsDeploymentService deploymentService,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        ISetupActivityMonitor activityMonitor)
     {
         _logger = logger;
         _deploymentService = deploymentService;
         _httpClientFactory = httpClientFactory;
+        _activityMonitor = activityMonitor;
     }
 
-    public async Task<BackendProvisioningResult> ProvisionAsync(BackendProvisioningRequest request, IProgress<string>? progress, CancellationToken cancellationToken)
+    private sealed record ProvisioningContext(string OwnerId, string AzPath, FunctionsDeploymentOptions Deployment, string PackagePath);
+
+    public async Task<BackendProvisioningResult> ProvisionAsync(BackendProvisioningRequest request, IProgress<ProvisioningProgressUpdate>? progress, CancellationToken cancellationToken)
+    {
+        using var activity = _activityMonitor.BeginActivity("Provisioning");
+        var preparation = await PrepareContextAsync(request, progress, cancellationToken).ConfigureAwait(false);
+        if (preparation.Failure is not null)
+        {
+            return preparation.Failure;
+        }
+
+        return await ExecuteProvisioningAsync(preparation.Context!, progress, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<(ProvisioningContext? Context, BackendProvisioningResult? Failure)> PrepareContextAsync(
+        BackendProvisioningRequest request,
+        IProgress<ProvisioningProgressUpdate>? progress,
+        CancellationToken cancellationToken)
     {
         if (request is null)
         {
@@ -46,34 +80,35 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
 
         if (string.IsNullOrWhiteSpace(request.OwnerId))
         {
-            return new(false, null, "OwnerId is required for provisioning.");
+            return (null, new(false, null, "OwnerId is required for provisioning."));
         }
 
-        progress?.Report("Checking Azure CLI availability...");
+        ReportProgress(progress, "Checking Azure CLI availability...", CliCheckPercent);
         if (!AzureCliLocator.TryResolveExecutable(out var azPath, out var azError))
         {
-            return new(false, null, azError ?? "Azure CLI (az) is required.");
+            return (null, new(false, null, azError ?? "Azure CLI (az) is required."));
         }
 
         var deployment = CloneDeployment(request.DeploymentOptions);
         AgentOptionsJson.Normalize(new AgentOptions { FunctionsDeployment = deployment });
-        progress?.Report("Validating deployment package...");
+        ReportProgress(progress, "Validating deployment package...", PackageValidatedPercent);
         var packagePath = FunctionsDeploymentUtilities.ResolvePackagePath(deployment.PackagePath);
         if (!File.Exists(packagePath))
         {
-            return new(false, null, $"Deployment package not found at {packagePath}.");
+            return (null, new(false, null, $"Deployment package not found at {packagePath}."));
         }
 
-        progress?.Report("Ensuring Azure CLI login and subscription access...");
+        ReportProgress(progress, "Ensuring Azure CLI login and subscription access...", LoginVerifiedPercent);
         var resolvedSubscriptionId = await EnsureLoginAsync(azPath, deployment.SubscriptionId, cancellationToken).ConfigureAwait(false);
         var effectiveSubscriptionId = string.IsNullOrWhiteSpace(deployment.SubscriptionId) ? resolvedSubscriptionId : deployment.SubscriptionId;
         if (string.IsNullOrWhiteSpace(effectiveSubscriptionId))
         {
-            return new(false, null, "Azure CLI login failed or subscription could not be resolved.");
+            return (null, new(false, null, "Azure CLI login failed or subscription could not be resolved."));
         }
 
         deployment.SubscriptionId = effectiveSubscriptionId;
         await SetSubscriptionAsync(azPath, deployment.SubscriptionId, cancellationToken).ConfigureAwait(false);
+
         var ownerId = request.OwnerId;
         deployment.FunctionAppName = string.IsNullOrWhiteSpace(deployment.FunctionAppName)
             ? ProvisioningNameGenerator.CreateFunctionAppName(ownerId)
@@ -89,22 +124,36 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
             : deployment.PlanName;
         deployment.Location = string.IsNullOrWhiteSpace(deployment.Location) ? "eastus" : deployment.Location;
 
+        var context = new ProvisioningContext(ownerId, azPath, deployment, packagePath);
+        return (context, null);
+    }
+
+    private async Task<BackendProvisioningResult> ExecuteProvisioningAsync(
+        ProvisioningContext context,
+        IProgress<ProvisioningProgressUpdate>? progress,
+        CancellationToken cancellationToken)
+    {
+        var deployment = context.Deployment;
+        var azPath = context.AzPath;
+        var ownerId = context.OwnerId;
+        var packagePath = context.PackagePath;
+
         try
         {
-            progress?.Report($"Creating resource group '{deployment.ResourceGroup}' in {deployment.Location}...");
+            ReportProgress(progress, $"Creating resource group '{deployment.ResourceGroup}' in {deployment.Location}...", ResourceGroupPercent);
             await EnsureResourceGroupAsync(azPath, deployment.ResourceGroup, deployment.Location, cancellationToken).ConfigureAwait(false);
-            progress?.Report($"Creating storage account '{deployment.StorageAccountName}'...");
+            ReportProgress(progress, $"Creating storage account '{deployment.StorageAccountName}'...", StorageAccountPercent);
             await EnsureStorageAccountAsync(azPath, deployment.ResourceGroup, deployment.StorageAccountName, deployment.Location, progress, cancellationToken).ConfigureAwait(false);
-            progress?.Report("Retrieving storage connection string...");
+            ReportProgress(progress, "Retrieving storage connection string...", ConnectionStringPercent);
             var connectionString = await GetStorageConnectionStringAsync(azPath, deployment.ResourceGroup, deployment.StorageAccountName, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(connectionString))
             {
                 return new(false, null, "Failed to obtain storage account connection string.");
             }
 
-            progress?.Report($"Creating Function App '{deployment.FunctionAppName}' (Consumption plan)...");
+            ReportProgress(progress, $"Creating Function App '{deployment.FunctionAppName}' (Consumption plan)...", FunctionAppPercent);
             await EnsureFunctionAppAsync(azPath, deployment, progress, cancellationToken).ConfigureAwait(false);
-            progress?.Report("Configuring Function App settings...");
+            ReportProgress(progress, "Configuring Function App settings...", SettingsPercent);
             await ConfigureFunctionAppAsync(azPath, deployment, connectionString, progress, cancellationToken).ConfigureAwait(false);
 
             var deployRequest = new FunctionsDeploymentRequest(
@@ -113,11 +162,11 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
                 deployment.SubscriptionId,
                 packagePath);
 
-            progress?.Report("Deploying Functions package (this may take a few minutes)...");
+            ReportProgress(progress, "Deploying Functions package (this may take a few minutes)...", DeploymentStartedPercent);
             var deployProgress = new Progress<string>(line =>
             {
                 _logger.LogInformation("Deploy: {Line}", line);
-                progress?.Report(line);
+                ReportProgress(progress, line, DeploymentStartedPercent, verbose: true);
             });
             var deployResult = await _deploymentService.DeployAsync(deployRequest, deployProgress, cancellationToken).ConfigureAwait(false);
             if (!deployResult.Succeeded)
@@ -125,7 +174,9 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
                 return new(false, null, deployResult.ErrorMessage ?? "Functions deployment failed.");
             }
 
-            progress?.Report("Retrieving function keys...");
+            ReportProgress(progress, "Deployment completed successfully.", DeploymentCompletePercent);
+
+            ReportProgress(progress, "Retrieving function keys...", KeysPercent);
             var functionKey = await GetFunctionKeyAsync(azPath, deployment.ResourceGroup, deployment.FunctionAppName, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(functionKey))
             {
@@ -143,14 +194,14 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
             AgentOptionsJson.Normalize(remoteOptions);
 
             var serialized = AgentOptionsJson.Serialize(remoteOptions);
-            progress?.Report("Seeding owner configuration in Functions backend...");
+            ReportProgress(progress, "Seeding owner configuration in Functions backend...", ConfigurationSeedPercent);
             var seedSucceeded = await SeedRemoteConfigurationAsync(apiBaseUrl, functionKey, ownerId, serialized, cancellationToken).ConfigureAwait(false);
             if (!seedSucceeded)
             {
                 return new(false, null, "Failed to seed owner configuration in the Functions backend.");
             }
 
-            progress?.Report($"✓ Provisioning completed! Function App: {deployment.FunctionAppName}");
+            ReportProgress(progress, $"✓ Provisioning completed! Function App: {deployment.FunctionAppName}", ConfigurationSeedPercent);
             _logger.LogInformation("Provisioned backend for owner {OwnerId} using Function App {FunctionApp}.", ownerId, deployment.FunctionAppName);
             return new(true, remoteOptions, null);
         }
@@ -255,14 +306,14 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
         }
     }
 
-    private async Task EnsureStorageAccountAsync(string azPath, string resourceGroup, string storageAccount, string location, IProgress<string>? progress, CancellationToken cancellationToken)
+    private async Task EnsureStorageAccountAsync(string azPath, string resourceGroup, string storageAccount, string location, IProgress<ProvisioningProgressUpdate>? progress, CancellationToken cancellationToken)
     {
         // First check if it already exists in our resource group
         var showArgs = $"storage account show --name {storageAccount} --resource-group \"{resourceGroup}\"";
         var showResult = await RunAzAsync(azPath, showArgs, captureOutput: false, cancellationToken).ConfigureAwait(false);
         if (showResult.ExitCode == 0)
         {
-            progress?.Report($"Storage account '{storageAccount}' already exists in resource group.");
+            ReportProgress(progress, $"Storage account '{storageAccount}' already exists in resource group.");
             return;
         }
 
@@ -272,7 +323,7 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
         if (checkResult.ExitCode == 0 && checkResult.StandardOutput.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
         {
             var errorMessage = $"The storage account name '{storageAccount}' is already taken globally. Please choose a different name.";
-            progress?.Report($"ERROR: {errorMessage}");
+            ReportProgress(progress, $"ERROR: {errorMessage}");
             throw new InvalidOperationException(errorMessage);
         }
 
@@ -283,7 +334,7 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
             var errorMessage = !string.IsNullOrWhiteSpace(createResult.StandardError)
                 ? createResult.StandardError.Trim()
                 : "Failed to create storage account.";
-            progress?.Report($"ERROR: {errorMessage}");
+            ReportProgress(progress, $"ERROR: {errorMessage}");
             throw new InvalidOperationException(errorMessage);
         }
     }
@@ -300,49 +351,61 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
         return result.StandardOutput.Trim();
     }
 
-    private async Task EnsureFunctionAppAsync(string azPath, FunctionsDeploymentOptions deployment, IProgress<string>? progress, CancellationToken cancellationToken)
+    private async Task EnsureFunctionAppAsync(string azPath, FunctionsDeploymentOptions deployment, IProgress<ProvisioningProgressUpdate>? progress, CancellationToken cancellationToken)
     {
-        // First check if it already exists in our resource group
-        var showArgs = $"functionapp show --name \"{deployment.FunctionAppName}\" --resource-group \"{deployment.ResourceGroup}\"";
-        var showResult = await RunAzAsync(azPath, showArgs, captureOutput: false, cancellationToken).ConfigureAwait(false);
-        if (showResult.ExitCode == 0)
+        if (await FunctionAppExistsAsync(azPath, deployment.FunctionAppName, deployment.ResourceGroup, cancellationToken).ConfigureAwait(false))
         {
-            progress?.Report($"Function App '{deployment.FunctionAppName}' already exists in resource group.");
+            ReportProgress(progress, $"Function App '{deployment.FunctionAppName}' already exists in resource group.");
             return;
         }
 
-        // Check global name availability before attempting to create
-        var checkArgs = $"functionapp check-name --name \"{deployment.FunctionAppName}\" --output json";
+        await EnsureFunctionAppNameAvailableAsync(azPath, deployment.FunctionAppName, progress, cancellationToken).ConfigureAwait(false);
+        await CreateFunctionAppAsync(azPath, deployment, progress, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> FunctionAppExistsAsync(string azPath, string functionAppName, string resourceGroup, CancellationToken cancellationToken)
+    {
+        var showArgs = $"functionapp show --name \"{functionAppName}\" --resource-group \"{resourceGroup}\"";
+        var showResult = await RunAzAsync(azPath, showArgs, captureOutput: false, cancellationToken).ConfigureAwait(false);
+        return showResult.ExitCode == 0;
+    }
+
+    private async Task EnsureFunctionAppNameAvailableAsync(string azPath, string functionAppName, IProgress<ProvisioningProgressUpdate>? progress, CancellationToken cancellationToken)
+    {
+        var checkArgs = $"functionapp check-name --name \"{functionAppName}\" --output json";
         var checkResult = await RunAzAsync(azPath, checkArgs, captureOutput: true, cancellationToken).ConfigureAwait(false);
         if (checkResult.ExitCode != 0 || string.IsNullOrWhiteSpace(checkResult.StandardOutput))
         {
             var cliError = !string.IsNullOrWhiteSpace(checkResult.StandardError)
                 ? checkResult.StandardError.Trim()
                 : "Function App name availability check failed.";
-            progress?.Report($"ERROR: {cliError}");
+            ReportProgress(progress, $"ERROR: {cliError}");
             throw new InvalidOperationException(cliError);
         }
 
-        using (var doc = JsonDocument.Parse(checkResult.StandardOutput))
+        using var doc = JsonDocument.Parse(checkResult.StandardOutput);
+        var nameAvailable = doc.RootElement.TryGetProperty("nameAvailable", out var availableProp) && availableProp.GetBoolean();
+        if (nameAvailable)
         {
-            var nameAvailable = doc.RootElement.TryGetProperty("nameAvailable", out var availableProp) && availableProp.GetBoolean();
-            if (!nameAvailable)
-            {
-                var message = doc.RootElement.TryGetProperty("message", out var messageProp) ? messageProp.GetString() : null;
-                var reason = doc.RootElement.TryGetProperty("reason", out var reasonProp) ? reasonProp.GetString() : null;
-                var errorMessage = !string.IsNullOrWhiteSpace(message)
-                    ? message
-                    : $"The function app name '{deployment.FunctionAppName}' is already taken globally.";
-                if (!string.IsNullOrWhiteSpace(reason))
-                {
-                    errorMessage = $"{errorMessage} ({reason})";
-                }
-
-                progress?.Report($"ERROR: {errorMessage}");
-                throw new InvalidOperationException(errorMessage);
-            }
+            return;
         }
 
+        var message = doc.RootElement.TryGetProperty("message", out var messageProp) ? messageProp.GetString() : null;
+        var reason = doc.RootElement.TryGetProperty("reason", out var reasonProp) ? reasonProp.GetString() : null;
+        var errorMessage = !string.IsNullOrWhiteSpace(message)
+            ? message
+            : $"The function app name '{functionAppName}' is already taken globally.";
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            errorMessage = $"{errorMessage} ({reason})";
+        }
+
+        ReportProgress(progress, $"ERROR: {errorMessage}");
+        throw new InvalidOperationException(errorMessage);
+    }
+
+    private async Task CreateFunctionAppAsync(string azPath, FunctionsDeploymentOptions deployment, IProgress<ProvisioningProgressUpdate>? progress, CancellationToken cancellationToken)
+    {
         var createArgs = $"functionapp create --name \"{deployment.FunctionAppName}\" --resource-group \"{deployment.ResourceGroup}\" --storage-account {deployment.StorageAccountName} --consumption-plan-location \"{deployment.Location}\" --functions-version 4 --runtime dotnet-isolated --os-type Windows";
         var createResult = await RunAzAsync(azPath, createArgs, captureOutput: false, cancellationToken).ConfigureAwait(false);
         if (createResult.ExitCode != 0)
@@ -350,12 +413,12 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
             var errorMessage = !string.IsNullOrWhiteSpace(createResult.StandardError)
                 ? createResult.StandardError.Trim()
                 : "Failed to create Azure Function App.";
-            progress?.Report($"ERROR: {errorMessage}");
+            ReportProgress(progress, $"ERROR: {errorMessage}");
             throw new InvalidOperationException(errorMessage);
         }
     }
 
-    private async Task ConfigureFunctionAppAsync(string azPath, FunctionsDeploymentOptions deployment, string connectionString, IProgress<string>? progress, CancellationToken cancellationToken)
+    private async Task ConfigureFunctionAppAsync(string azPath, FunctionsDeploymentOptions deployment, string connectionString, IProgress<ProvisioningProgressUpdate>? progress, CancellationToken cancellationToken)
     {
         var payloadContainer = deployment.PayloadContainer;
         var metadataTable = deployment.MetadataTable;
@@ -367,7 +430,7 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
             var errorMessage = !string.IsNullOrWhiteSpace(settingsResult.StandardError)
                 ? settingsResult.StandardError.Trim()
                 : "Failed to configure Function App settings.";
-            progress?.Report($"ERROR: {errorMessage}");
+            ReportProgress(progress, $"ERROR: {errorMessage}");
             throw new InvalidOperationException(errorMessage);
         }
     }
@@ -416,8 +479,8 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
     private async Task<CommandResult> RunAzAsync(string azPath, string arguments, bool captureOutput, CancellationToken cancellationToken, string? logDisplay = null)
     {
         _logger.LogInformation("az {Arguments}", logDisplay ?? arguments);
-        var output = new StringBuilder();
-        var error = new StringBuilder();
+        StringBuilder? output = captureOutput ? new StringBuilder() : null;
+        StringBuilder? error = captureOutput ? new StringBuilder() : null;
         var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var process = new Process
         {
@@ -425,28 +488,31 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
             {
                 FileName = azPath,
                 Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
+                RedirectStandardOutput = captureOutput,
+                RedirectStandardError = captureOutput,
+                UseShellExecute = !captureOutput,
+                CreateNoWindow = captureOutput
             },
             EnableRaisingEvents = true
         };
 
-        process.OutputDataReceived += (_, e) =>
+        if (captureOutput)
         {
-            if (!string.IsNullOrEmpty(e.Data))
+            process.OutputDataReceived += (_, e) =>
             {
-                output.AppendLine(e.Data);
-            }
-        };
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (!string.IsNullOrEmpty(e.Data))
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    output!.AppendLine(e.Data);
+                }
+            };
+            process.ErrorDataReceived += (_, e) =>
             {
-                error.AppendLine(e.Data);
-            }
-        };
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    error!.AppendLine(e.Data);
+                }
+            };
+        }
 
         process.Exited += (_, _) =>
         {
@@ -459,8 +525,11 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
             throw new InvalidOperationException("Failed to start Azure CLI process.");
         }
 
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        if (captureOutput)
+        {
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+        }
 
         using var registration = cancellationToken.Register(() =>
         {
@@ -478,7 +547,18 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
         });
 
         var exitCode = await tcs.Task.ConfigureAwait(false);
-        return new CommandResult(exitCode, output.ToString(), error.ToString());
+        return new CommandResult(exitCode, output?.ToString() ?? string.Empty, error?.ToString() ?? string.Empty);
+    }
+
+    private static void ReportProgress(IProgress<ProvisioningProgressUpdate>? progress, string message, double? percent = null, bool verbose = false)
+    {
+        if (progress is null || string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        double? clamped = percent.HasValue ? Math.Clamp(percent.Value, 0, 100) : null;
+        progress.Report(new ProvisioningProgressUpdate(message, clamped, verbose));
     }
 
     private sealed record CommandResult(int ExitCode, string StandardOutput, string StandardError);

@@ -46,6 +46,17 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="appsettings*.json">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </None>
+    <Content Update="appsettings*.json">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
   <Target Name="IncrementVersionOnBuild"
           BeforeTargets="GenerateAssemblyInfo"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(RunIncrementVersionOnBuild)' != 'false'">

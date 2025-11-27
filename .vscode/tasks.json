@@ -1,147 +1,157 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
-			"label": "clean (functions)",
-			"command": "dotnet",
-			"args": [
-				"clean",
-				"/property:GenerateFullPaths=true",
-				"/consoleloggerparameters:NoSummary"
-			],
-			"type": "process",
-			"problemMatcher": "$msCompile",
-			"options": {
-				"cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions"
-			}
-		},
-		{
-			"label": "build (functions)",
-			"command": "dotnet",
-			"args": [
-				"build",
-				"/property:GenerateFullPaths=true",
-				"/consoleloggerparameters:NoSummary"
-			],
-			"type": "process",
-			"dependsOn": "clean (functions)",
-			"group": {
-				"kind": "build",
-				"isDefault": true
-			},
-			"problemMatcher": "$msCompile",
-			"options": {
-				"cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions"
-			}
-		},
-		{
-			"label": "clean release (functions)",
-			"command": "dotnet",
-			"args": [
-				"clean",
-				"--configuration",
-				"Release",
-				"/property:GenerateFullPaths=true",
-				"/consoleloggerparameters:NoSummary"
-			],
-			"type": "process",
-			"problemMatcher": "$msCompile",
-			"options": {
-				"cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions"
-			}
-		},
-		{
-			"label": "publish (functions)",
-			"command": "dotnet",
-			"args": [
-				"publish",
-				"--configuration",
-				"Release",
-				"/property:GenerateFullPaths=true",
-				"/consoleloggerparameters:NoSummary"
-			],
-			"type": "process",
-			"dependsOn": "clean release (functions)",
-			"problemMatcher": "$msCompile",
-			"options": {
-				"cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions"
-			}
-		},
-		{
-			"label": "start functions host",
-			"type": "process",
-			"command": "func",
-			"args": [
-				"host",
-				"start"
-			],
-			"dependsOn": "build (functions)",
-			"options": {
-				"cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions/bin/Debug/net8.0"
-			},
-			"isBackground": true,
-			"problemMatcher": "$func-dotnet-watch"
-		},
-		{
-			"label": "start local stack (functions only)",
-			"type": "shell",
-			"command": "powershell",
-			"args": [
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				"${workspaceFolder}/scripts/run-local-stack.ps1",
-				"-SkipAgent"
-			],
-			"problemMatcher": []
-		},
-		{
-			"label": "build (windows agent)",
-			"type": "process",
-			"command": "dotnet",
-			"args": [
-				"build",
-				"${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agent.Windows.csproj",
-				"/property:GenerateFullPaths=true",
-				"/consoleloggerparameters:NoSummary"
-			],
-			"problemMatcher": "$msCompile",
-			"group": {
-				"kind": "build",
-				"isDefault": false
-			}
-		},
-		{
-			"label": "publish (agent self-contained)",
-			"type": "process",
-			"command": "dotnet",
-			"args": [
-				"publish",
-				"${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agent.Windows.csproj",
-				"--configuration",
-				"Release",
-				"--runtime",
-				"win-x64",
-				"--self-contained",
-				"true",
-				"/property:PublishSingleFile=true",
-				"/property:PublishTrimmed=false",
-				"/property:GenerateFullPaths=true",
-				"/consoleloggerparameters:NoSummary"
-			],
-			"problemMatcher": "$msCompile"
-		},
-		{
-			"label": "publish (agent framework-dependent)",
-			"type": "process",
-			"command": "dotnet",
-			"args": [
-				"publish",
-				"${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agent.Windows.csproj",
-				"--configuration",
-				"Release"
-			],
-			"problemMatcher": []
-		}
-	]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "clean (functions)",
+      "command": "dotnet",
+      "args": [
+        "clean",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "type": "process",
+      "problemMatcher": "$msCompile",
+      "options": {
+        "cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions"
+      }
+    },
+    {
+      "label": "build (functions)",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "type": "process",
+      "dependsOn": "clean (functions)",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile",
+      "options": {
+        "cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions"
+      }
+    },
+    {
+      "label": "clean release (functions)",
+      "command": "dotnet",
+      "args": [
+        "clean",
+        "--configuration",
+        "Release",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "type": "process",
+      "problemMatcher": "$msCompile",
+      "options": {
+        "cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions"
+      }
+    },
+    {
+      "label": "publish (functions)",
+      "command": "dotnet",
+      "args": [
+        "publish",
+        "--configuration",
+        "Release",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "type": "process",
+      "dependsOn": "clean release (functions)",
+      "problemMatcher": "$msCompile",
+      "options": {
+        "cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions"
+      }
+    },
+    {
+      "label": "start functions host",
+      "type": "process",
+      "command": "func",
+      "args": [
+        "host",
+        "start"
+      ],
+      "dependsOn": "build (functions)",
+      "options": {
+        "cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions/bin/Debug/net8.0"
+      },
+      "isBackground": true,
+      "problemMatcher": "$func-dotnet-watch"
+    },
+    {
+      "label": "start local stack (functions only)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/run-local-stack.ps1",
+        "-SkipAgent"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "build (windows agent)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agent.Windows.csproj",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "publish (agent self-contained)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "publish",
+        "${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agent.Windows.csproj",
+        "--configuration",
+        "Release",
+        "--runtime",
+        "win-x64",
+        "--self-contained",
+        "true",
+        "/property:PublishSingleFile=true",
+        "/property:PublishTrimmed=false",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "publish (agent framework-dependent)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "publish",
+        "${workspaceFolder}/src/WindowsAgent/CloudClipboard.Agent.Windows/CloudClipboard.Agent.Windows.csproj",
+        "--configuration",
+        "Release"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "type": "func",
+      "dependsOn": "build (functions)",
+      "options": {
+        "cwd": "${workspaceFolder}/src\\Functions\\CloudClipboard.Functions/bin/Debug/net8.0"
+      },
+      "command": "host start",
+      "isBackground": true,
+      "problemMatcher": "$func-dotnet-watch"
+    }
+  ]
 }
