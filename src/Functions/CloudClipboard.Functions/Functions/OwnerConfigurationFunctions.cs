@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Text.Json;
 using System.Threading;
@@ -55,15 +56,14 @@ public sealed class OwnerConfigurationFunctions
             return req.CreateResponse(HttpStatusCode.BadRequest);
         }
 
-        OwnerConfigurationRequest? dto;
+        OwnerConfigurationRequest? dto = null;
         try
         {
             dto = await req.ReadFromJsonAsync<OwnerConfigurationRequest>(cancellationToken: cancellationToken);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (IsConfigurationPayloadException(ex))
         {
             _logger.LogWarning(ex, "Owner configuration payload invalid for {OwnerId}", ownerId);
-            dto = null;
         }
 
         if (dto is null || string.IsNullOrWhiteSpace(dto.ConfigurationJson))
@@ -77,5 +77,20 @@ public sealed class OwnerConfigurationFunctions
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(OwnerConfigurationDto.FromModel(configuration), cancellationToken);
         return response;
+    }
+
+    private static bool IsConfigurationPayloadException(Exception exception)
+    {
+        if (exception is JsonException)
+        {
+            return true;
+        }
+
+        if (exception is AggregateException aggregate)
+        {
+            return aggregate.InnerExceptions.Any(IsConfigurationPayloadException);
+        }
+
+        return false;
     }
 }

@@ -89,21 +89,14 @@ public sealed class FirstRunConfigurationService : BackgroundService
         var remoteOptions = await TryLoadRemoteAsync(ownerId, cancellationToken).ConfigureAwait(false);
         if (remoteOptions is null)
         {
-            _logger.LogWarning("No remote configuration exists for owner {OwnerId}. Prompting for provisioning options...", ownerId);
-            var provisioningOptions = await PromptForProvisioningOptionsAsync(ownerId, principal.SubscriptionId, cancellationToken).ConfigureAwait(false);
-            if (provisioningOptions is null)
+            _logger.LogWarning("No remote configuration exists for owner {OwnerId}. Starting provisioning flow...", ownerId);
+            var provisioningResult = await RunProvisioningDialogAsync(ownerId, principal.SubscriptionId, cancellationToken).ConfigureAwait(false);
+            if (provisioningResult is null)
             {
                 _logger.LogInformation("Provisioning cancelled or dialog dismissed. Agent settings will not be created.");
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(provisioningOptions.SubscriptionId))
-            {
-                provisioningOptions.SubscriptionId = principal.SubscriptionId ?? provisioningOptions.SubscriptionId;
-            }
-
-            var provisioningRequest = new BackendProvisioningRequest(ownerId, provisioningOptions);
-            var provisioningResult = await RunProvisioningWithProgressAsync(provisioningRequest, cancellationToken).ConfigureAwait(false);
             if (!provisioningResult.Succeeded || provisioningResult.RemoteOptions is null)
             {
                 _logger.LogWarning("Automated provisioning failed for owner {OwnerId}: {Reason}", ownerId, provisioningResult.ErrorMessage ?? "unknown error");
@@ -153,7 +146,7 @@ public sealed class FirstRunConfigurationService : BackgroundService
         }
     }
 
-    private async Task<FunctionsDeploymentOptions?> PromptForProvisioningOptionsAsync(string ownerId, string? subscriptionId, CancellationToken cancellationToken)
+    private async Task<BackendProvisioningResult?> RunProvisioningDialogAsync(string ownerId, string? subscriptionId, CancellationToken cancellationToken)
     {
         var baseline = AgentOptionsJson.Clone(_options.CurrentValue);
         AgentOptionsJson.Normalize(baseline);
@@ -205,70 +198,14 @@ public sealed class FirstRunConfigurationService : BackgroundService
 
         try
         {
-            return await ProvisionBackendDialog.ShowAsync(ownerId, initialSubscriptionId, defaults, subscriptions, locations, _metadataProvider, _iconProvider, cancellationToken).ConfigureAwait(false);
+            var dialogOptions = new ProvisionBackendDialogOptions(ownerId, initialSubscriptionId, defaults, subscriptions, locations);
+            var dialogDependencies = new ProvisionBackendDialogDependencies(_metadataProvider, _provisioningService, _iconProvider);
+            return await ProvisionBackendDialog.ShowAsync(dialogOptions, dialogDependencies, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             return null;
         }
-    }
-
-    private async Task<BackendProvisioningResult> RunProvisioningWithProgressAsync(BackendProvisioningRequest request, CancellationToken cancellationToken)
-    {
-        var tcs = new TaskCompletionSource<BackendProvisioningResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                Application.EnableVisualStyles();
-                using var dialog = new ProvisioningProgressDialog();
-                dialog.SetIcon(_iconProvider.GetIcon(32));
-
-                var combinedProgress = new Progress<ProvisioningProgressUpdate>(update =>
-                {
-                    dialog.ApplyProgress(update);
-                });
-
-                using var registration = cancellationToken.Register(() =>
-                {
-                    if (dialog.IsHandleCreated)
-                    {
-                        dialog.BeginInvoke(new Action(dialog.Close));
-                    }
-                });
-
-                dialog.Load += async (_, _) =>
-                {
-                    try
-                    {
-                        dialog.SetBusyState(true, "Provisioning backend...");
-                        var result = await _provisioningService.ProvisionAsync(request, combinedProgress, cancellationToken).ConfigureAwait(true);
-                        dialog.MarkComplete(result.Succeeded, result.ErrorMessage);
-                        tcs.TrySetResult(result);
-                    }
-                    catch (Exception ex)
-                    {
-                        dialog.MarkComplete(false, $"Exception: {ex.Message}");
-                        tcs.TrySetException(ex);
-                    }
-                };
-
-                Application.Run(dialog);
-            }
-            catch (Exception ex)
-            {
-                tcs.TrySetException(ex);
-            }
-        })
-        {
-            IsBackground = false,
-            Name = "CloudClipboard.ProvisionProgress"
-        };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-
-        return await tcs.Task.ConfigureAwait(false);
     }
 
     private static FunctionsDeploymentOptions CloneDeploymentOptions(FunctionsDeploymentOptions source)

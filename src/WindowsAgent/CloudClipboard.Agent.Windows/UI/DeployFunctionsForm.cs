@@ -43,6 +43,7 @@ public sealed class DeployFunctionsForm : Form
         ClientSize = new Size(1100, 760);
         MinimumSize = new Size(1000, 720);
         AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScroll = true;
 
         _tabControl = new TabControl
         {

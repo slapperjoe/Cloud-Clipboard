@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -15,7 +16,12 @@ namespace CloudClipboard.Agent.Windows.UI;
 
 public sealed class ProvisionBackendDialog : Form
 {
-    private readonly TextBox _ownerIdText;
+    private readonly string _ownerId;
+    private readonly IBackendProvisioningService _provisioningService;
+    private BackendProvisioningResult? _provisioningResult;
+    private bool _isProvisioning;
+    private bool _provisioningCompletedSuccessfully;
+
     private readonly ComboBox _subscriptionCombo;
     private readonly ComboBox _locationCombo;
     private readonly TextBox _resourceGroupText;
@@ -28,25 +34,39 @@ public sealed class ProvisionBackendDialog : Form
     private readonly RichTextBox _logTextBox;
     private readonly Button _browseButton;
     private readonly Button _provisionButton;
+    private readonly Button _cancelButton;
     private readonly Label _errorLabel;
+    private readonly Label _statusLabel;
+    private readonly ProgressBar _progressBar;
     private readonly IAzureCliMetadataProvider _metadataProvider;
     private readonly CancellationToken _cancellationToken;
     private readonly System.Windows.Forms.Timer _locationRefreshTimer;
     private CancellationTokenSource? _locationRefreshCts;
-    private readonly IAppIconProvider _iconProvider;
+    private readonly TabControl _tabControl;
+    private readonly TabPage _configTab;
+    private readonly TabPage _logTab;
 
     private ProvisionBackendDialog(
-        string ownerId,
-        string? subscriptionId,
-        FunctionsDeploymentOptions defaults,
-        IReadOnlyList<AzureSubscriptionInfo> subscriptions,
-        IReadOnlyList<AzureLocationInfo> locations,
-        IAzureCliMetadataProvider metadataProvider,
-        IAppIconProvider iconProvider,
+        ProvisionBackendDialogOptions options,
+        ProvisionBackendDialogDependencies dependencies,
         CancellationToken cancellationToken)
     {
-        _metadataProvider = metadataProvider ?? throw new ArgumentNullException(nameof(metadataProvider));
-        _iconProvider = iconProvider ?? throw new ArgumentNullException(nameof(iconProvider));
+        if (options is null)
+        {
+            throw new ArgumentNullException(nameof(options));
+        }
+
+        if (dependencies is null)
+        {
+            throw new ArgumentNullException(nameof(dependencies));
+        }
+
+        _ownerId = string.IsNullOrWhiteSpace(options.OwnerId)
+            ? throw new ArgumentException("Owner Id is required.", nameof(options))
+            : options.OwnerId;
+        _metadataProvider = dependencies.MetadataProvider ?? throw new ArgumentNullException(nameof(dependencies), "MetadataProvider is required.");
+        _provisioningService = dependencies.ProvisioningService ?? throw new ArgumentNullException(nameof(dependencies), "ProvisioningService is required.");
+        var iconProvider = dependencies.IconProvider ?? throw new ArgumentNullException(nameof(dependencies), "IconProvider is required.");
         _cancellationToken = cancellationToken;
         _locationRefreshTimer = new System.Windows.Forms.Timer { Interval = 600 };
         _locationRefreshTimer.Tick += (_, _) =>
@@ -58,26 +78,41 @@ public sealed class ProvisionBackendDialog : Form
         Text = "Provision Cloud Clipboard Backend";
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(1120,1100);
-        MinimumSize = new Size(1024, 1040);
+        AutoScroll = true;
+        ClientSize = new Size(1120,480);
+        MinimumSize = new Size(1024, 500);
         MinimizeBox = false;
         MaximizeBox = false;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         ShowIcon = true;
-        Icon = _iconProvider.GetIcon(32);
+        Icon = iconProvider.GetIcon(32);
+
+        _tabControl = new TabControl
+        {
+            Dock = DockStyle.Fill
+        };
+
+        var configTab = new TabPage("Configuration")
+        {
+            Padding = new Padding(0),
+            AutoScroll = true
+        };
+        _configTab = configTab;
 
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
             ColumnCount = 3,
             RowCount = 0,
             Padding = new Padding(16),
-            AutoSize = false,
+            AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        configTab.Controls.Add(layout);
+        _tabControl.TabPages.Add(configTab);
 
         var intro = new Label
         {
@@ -91,58 +126,59 @@ public sealed class ProvisionBackendDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowCount++;
 
-        _ownerIdText = CreateTextBox(ownerId, readOnly: true);
-        AddRow(layout, "Owner Id", _ownerIdText);
+        var ownerIdTextBox = CreateTextBox(_ownerId, readOnly: true);
+        AddRow(layout, "Owner Id", ownerIdTextBox);
 
         _subscriptionCombo = CreateComboBox();
-        BindSubscriptions(_subscriptionCombo, subscriptions, subscriptionId ?? defaults.SubscriptionId);
+        BindSubscriptions(_subscriptionCombo, options.Subscriptions, options.SubscriptionId ?? options.Defaults.SubscriptionId);
         AddRow(layout, "Subscription", _subscriptionCombo);
         HookValidation(_subscriptionCombo);
 
         _locationCombo = CreateComboBox();
-        BindLocations(_locationCombo, locations, string.IsNullOrWhiteSpace(defaults.Location) ? "eastus" : defaults.Location);
+        var defaultLocation = string.IsNullOrWhiteSpace(options.Defaults.Location) ? "eastus" : options.Defaults.Location;
+        BindLocations(_locationCombo, options.Locations, defaultLocation);
         AddRow(layout, "Location", _locationCombo);
         HookValidation(_locationCombo);
 
-        _resourceGroupText = CreateTextBox(string.IsNullOrWhiteSpace(defaults.ResourceGroup)
-            ? ProvisioningNameGenerator.CreateResourceGroupName(ownerId)
-            : defaults.ResourceGroup);
+        _resourceGroupText = CreateTextBox(string.IsNullOrWhiteSpace(options.Defaults.ResourceGroup)
+            ? ProvisioningNameGenerator.CreateResourceGroupName(_ownerId)
+            : options.Defaults.ResourceGroup);
         AddRow(layout, "Resource Group", _resourceGroupText);
         HookValidation(_resourceGroupText);
 
-        _functionAppText = CreateTextBox(string.IsNullOrWhiteSpace(defaults.FunctionAppName)
-            ? ProvisioningNameGenerator.CreateFunctionAppName(ownerId)
-            : defaults.FunctionAppName);
+        _functionAppText = CreateTextBox(string.IsNullOrWhiteSpace(options.Defaults.FunctionAppName)
+            ? ProvisioningNameGenerator.CreateFunctionAppName(_ownerId)
+            : options.Defaults.FunctionAppName);
         AddRow(layout, "Function App Name", _functionAppText);
         HookValidation(_functionAppText);
 
-        _storageAccountText = CreateTextBox(string.IsNullOrWhiteSpace(defaults.StorageAccountName)
-            ? ProvisioningNameGenerator.CreateStorageAccountName(ownerId)
-            : defaults.StorageAccountName);
+        _storageAccountText = CreateTextBox(string.IsNullOrWhiteSpace(options.Defaults.StorageAccountName)
+            ? ProvisioningNameGenerator.CreateStorageAccountName(_ownerId)
+            : options.Defaults.StorageAccountName);
         AddRow(layout, "Storage Account", _storageAccountText);
         HookValidation(_storageAccountText);
 
-        _planText = CreateTextBox(string.IsNullOrWhiteSpace(defaults.PlanName)
-            ? ProvisioningNameGenerator.CreatePlanName(ownerId)
-            : defaults.PlanName);
+        _planText = CreateTextBox(string.IsNullOrWhiteSpace(options.Defaults.PlanName)
+            ? ProvisioningNameGenerator.CreatePlanName(_ownerId)
+            : options.Defaults.PlanName);
         AddRow(layout, "Hosting Plan", _planText);
         HookValidation(_planText);
 
-        _containerText = CreateTextBox(string.IsNullOrWhiteSpace(defaults.PayloadContainer)
+        _containerText = CreateTextBox(string.IsNullOrWhiteSpace(options.Defaults.PayloadContainer)
             ? "clipboardpayloads"
-            : defaults.PayloadContainer);
+            : options.Defaults.PayloadContainer);
         AddRow(layout, "Blob Container", _containerText);
         HookValidation(_containerText);
 
-        _tableText = CreateTextBox(string.IsNullOrWhiteSpace(defaults.MetadataTable)
+        _tableText = CreateTextBox(string.IsNullOrWhiteSpace(options.Defaults.MetadataTable)
             ? "ClipboardMetadata"
-            : defaults.MetadataTable);
+            : options.Defaults.MetadataTable);
         AddRow(layout, "Table Name", _tableText);
         HookValidation(_tableText);
 
-        _packagePathText = CreateTextBox(string.IsNullOrWhiteSpace(defaults.PackagePath)
+        _packagePathText = CreateTextBox(string.IsNullOrWhiteSpace(options.Defaults.PackagePath)
             ? FunctionsDeploymentOptions.CreateDefault().PackagePath
-            : defaults.PackagePath);
+            : options.Defaults.PackagePath);
         _browseButton = new Button { Text = "Browse", AutoSize = true };
         _browseButton.Click += (_, _) => BrowseForPackage();
         AddRow(layout, "Package Path", _packagePathText, _browseButton);
@@ -159,35 +195,78 @@ public sealed class ProvisionBackendDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowCount++;
 
+        _statusLabel = new Label
+        {
+            Text = "Waiting to start provisioning...",
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            Height = 20,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold)
+        };
+
         _logTextBox = new RichTextBox
         {
             Multiline = true,
             ReadOnly = true,
             DetectUrls = false,
-            ShortcutsEnabled = false,
+            ShortcutsEnabled = true,
             Dock = DockStyle.Fill,
             Font = new Font("Consolas", 9F),
             BackColor = Color.Black,
             ForeColor = Color.LimeGreen,
             BorderStyle = BorderStyle.FixedSingle,
-            ScrollBars = RichTextBoxScrollBars.Vertical,
+            ScrollBars = RichTextBoxScrollBars.Both,
             WordWrap = false,
-            MinimumSize = new Size(0, 260)
+            HideSelection = false
         };
+
+        var logContextMenu = new ContextMenuStrip();
+        var copyMenuItem = new ToolStripMenuItem("Copy") { ShortcutKeys = Keys.Control | Keys.C };
+        copyMenuItem.Click += (_, _) => CopyLogSelection();
+        var selectAllMenuItem = new ToolStripMenuItem("Select All") { ShortcutKeys = Keys.Control | Keys.A };
+        selectAllMenuItem.Click += (_, _) => SelectAllLogText();
+        logContextMenu.Items.Add(copyMenuItem);
+        logContextMenu.Items.Add(selectAllMenuItem);
+        _logTextBox.ContextMenuStrip = logContextMenu;
+
+        _progressBar = new ProgressBar
+        {
+            Dock = DockStyle.Fill,
+            Style = ProgressBarStyle.Continuous,
+            Height = 22,
+            Margin = new Padding(0, 8, 0, 0)
+        };
+
+        var logLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            Padding = new Padding(4)
+        };
+        logLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        logLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        logLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        logLayout.Controls.Add(_statusLabel, 0, 0);
+        logLayout.Controls.Add(_logTextBox, 0, 1);
+        logLayout.Controls.Add(_progressBar, 0, 2);
 
         var logGroup = new GroupBox
         {
-            Text = "Azure CLI Output",
+            Text = string.Empty,
             Dock = DockStyle.Fill,
-            Padding = new Padding(8),
-            Margin = new Padding(0, 0, 0, 8),
-            MinimumSize = new Size(0, 300)
+            Padding = new Padding(4),
+            Margin = new Padding(8)
         };
-        logGroup.Controls.Add(_logTextBox);
-        layout.Controls.Add(logGroup, 0, layout.RowCount);
-        layout.SetColumnSpan(logGroup, 3);
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowCount++;
+        logGroup.Controls.Add(logLayout);
+
+        _logTab = new TabPage("Azure CLI Output")
+        {
+            Padding = new Padding(0)
+        };
+        _logTab.Controls.Add(logGroup);
+        _tabControl.TabPages.Add(_logTab);
 
         var buttonsPanel = new FlowLayoutPanel
         {
@@ -198,41 +277,43 @@ public sealed class ProvisionBackendDialog : Form
         };
         _provisionButton = new Button { Text = "Provision", AutoSize = true, MinimumSize = new Size(90, 28), Padding = new Padding(8, 4, 8, 4) };
         _provisionButton.Click += (_, _) => OnProvision();
-        var cancelButton = new Button { Text = "Cancel", AutoSize = true, MinimumSize = new Size(90, 28), Padding = new Padding(8, 4, 8, 4) };
-        cancelButton.Click += (_, _) => CloseWithResult(DialogResult.Cancel);
+        _cancelButton = new Button { Text = "Cancel", AutoSize = true, MinimumSize = new Size(90, 28), Padding = new Padding(8, 4, 8, 4) };
+        _cancelButton.Click += (_, _) => OnCancelClicked();
         buttonsPanel.Controls.Add(_provisionButton);
-        buttonsPanel.Controls.Add(cancelButton);
+        buttonsPanel.Controls.Add(_cancelButton);
 
-        layout.Controls.Add(buttonsPanel, 0, layout.RowCount);
-        layout.SetColumnSpan(buttonsPanel, 3);
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowCount++;
+        var rootLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Padding = new Padding(0)
+        };
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        rootLayout.Controls.Add(_tabControl, 0, 0);
+        rootLayout.Controls.Add(buttonsPanel, 0, 1);
 
-        Controls.Add(layout);
+        Controls.Add(rootLayout);
         Shown += (_, _) => ValidateInputs();
 
         _subscriptionCombo.SelectedIndexChanged += (_, _) => ScheduleLocationRefresh();
         _subscriptionCombo.TextChanged += (_, _) => ScheduleLocationRefresh();
     }
 
-    public static Task<FunctionsDeploymentOptions?> ShowAsync(
-        string ownerId,
-        string? subscriptionId,
-        FunctionsDeploymentOptions defaults,
-        IReadOnlyList<AzureSubscriptionInfo> subscriptions,
-        IReadOnlyList<AzureLocationInfo> locations,
-        IAzureCliMetadataProvider metadataProvider,
-        IAppIconProvider iconProvider,
+    public static Task<BackendProvisioningResult?> ShowAsync(
+        ProvisionBackendDialogOptions options,
+        ProvisionBackendDialogDependencies dependencies,
         CancellationToken cancellationToken)
     {
-        var tcs = new TaskCompletionSource<FunctionsDeploymentOptions?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<BackendProvisioningResult?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var thread = new Thread(() =>
         {
             try
             {
                 Application.EnableVisualStyles();
-                using var dialog = new ProvisionBackendDialog(ownerId, subscriptionId, defaults, subscriptions, locations, metadataProvider, iconProvider, cancellationToken);
+                using var dialog = new ProvisionBackendDialog(options, dependencies, cancellationToken);
                 using var registration = cancellationToken.Register(() =>
                 {
                     if (dialog.IsHandleCreated)
@@ -241,9 +322,9 @@ public sealed class ProvisionBackendDialog : Form
                     }
                 });
                 var result = dialog.ShowDialog();
-                if (result == DialogResult.OK)
+                if (result == DialogResult.OK && dialog._provisioningResult is not null)
                 {
-                    tcs.TrySetResult(dialog.BuildOptions());
+                    tcs.TrySetResult(dialog._provisioningResult);
                 }
                 else if (cancellationToken.IsCancellationRequested)
                 {
@@ -474,6 +555,172 @@ public sealed class ProvisionBackendDialog : Form
         }
     }
 
+    private void ToggleConfigurationInputs(bool enabled)
+    {
+        _subscriptionCombo.Enabled = enabled;
+        _locationCombo.Enabled = enabled;
+        _resourceGroupText.ReadOnly = !enabled;
+        _functionAppText.ReadOnly = !enabled;
+        _storageAccountText.ReadOnly = !enabled;
+        _planText.ReadOnly = !enabled;
+        _containerText.ReadOnly = !enabled;
+        _tableText.ReadOnly = !enabled;
+        _packagePathText.ReadOnly = !enabled;
+        _browseButton.Enabled = enabled;
+    }
+
+    private void OnCancelClicked()
+    {
+        if (_isProvisioning)
+        {
+            MessageBox.Show(this, "Provisioning is currently running. Please wait until it completes.", "Provisioning In Progress", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (_provisioningCompletedSuccessfully)
+        {
+            CloseWithResult(DialogResult.OK);
+        }
+        else
+        {
+            CloseWithResult(DialogResult.Cancel);
+        }
+    }
+
+    private async Task StartProvisioningAsync()
+    {
+        _isProvisioning = true;
+        ToggleConfigurationInputs(false);
+        _provisionButton.Enabled = false;
+        _cancelButton.Enabled = false;
+        ShowLogTab();
+        SetProgressBusy(true, "Provisioning backend...");
+
+        var request = new BackendProvisioningRequest(_ownerId, BuildOptions());
+        var progress = new Progress<ProvisioningProgressUpdate>(ApplyProvisioningProgress);
+
+        BackendProvisioningResult result;
+        try
+        {
+            result = await _provisioningService.ProvisionAsync(request, progress, _cancellationToken).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            result = new BackendProvisioningResult(false, null, ex.Message);
+        }
+
+        HandleProvisioningCompletion(result);
+    }
+
+    private void HandleProvisioningCompletion(BackendProvisioningResult result)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => HandleProvisioningCompletion(result)));
+            return;
+        }
+
+        _isProvisioning = false;
+        SetProgressBusy(false);
+
+        if (result.Succeeded && result.RemoteOptions is not null)
+        {
+            _provisioningResult = result;
+            _provisioningCompletedSuccessfully = true;
+            UpdateStatusLabel("✓ Provisioning completed. Close this window to start using the agent.", Color.DarkGreen);
+            AppendLog("Provisioning completed successfully. Close the dialog to apply the configuration.");
+            _cancelButton.Text = "Close";
+            _cancelButton.Enabled = true;
+            _provisionButton.Visible = false;
+            MessageBox.Show(
+                this,
+                "Provisioning finished successfully. Close this window to apply the configuration and let the agent start using it.",
+                "Provisioning Complete",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        else
+        {
+            var message = result.ErrorMessage ?? "Provisioning failed.";
+            UpdateStatusLabel(message, Color.DarkRed);
+            AppendLog(message, isError: true);
+            ToggleConfigurationInputs(true);
+            _provisionButton.Enabled = true;
+            _cancelButton.Enabled = true;
+            ShowConfigurationTab();
+        }
+    }
+
+    private void ApplyProvisioningProgress(ProvisioningProgressUpdate update)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => ApplyProvisioningProgress(update)));
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(update.Message))
+        {
+            AppendLog(update.Message);
+            if (!update.IsVerbose)
+            {
+                UpdateStatusLabel(update.Message);
+            }
+        }
+
+        if (update.PercentComplete.HasValue)
+        {
+            var percent = (int)Math.Clamp(Math.Round(update.PercentComplete.Value), 0, 100);
+            _progressBar.Style = ProgressBarStyle.Continuous;
+            _progressBar.MarqueeAnimationSpeed = 0;
+            _progressBar.Value = Math.Min(_progressBar.Maximum, Math.Max(_progressBar.Minimum, percent));
+        }
+        else if (_progressBar.Style != ProgressBarStyle.Marquee && !_provisioningCompletedSuccessfully)
+        {
+            _progressBar.Style = ProgressBarStyle.Marquee;
+            _progressBar.MarqueeAnimationSpeed = 30;
+        }
+    }
+
+    private void SetProgressBusy(bool busy, string? status = null)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => SetProgressBusy(busy, status)));
+            return;
+        }
+
+        if (busy)
+        {
+            _progressBar.Style = ProgressBarStyle.Marquee;
+            _progressBar.MarqueeAnimationSpeed = 30;
+            _progressBar.Value = 0;
+        }
+        else
+        {
+            _progressBar.Style = ProgressBarStyle.Continuous;
+            _progressBar.MarqueeAnimationSpeed = 0;
+            _progressBar.Value = _provisioningCompletedSuccessfully ? _progressBar.Maximum : 0;
+        }
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            UpdateStatusLabel(status);
+        }
+    }
+
+    private void UpdateStatusLabel(string message, Color? color = null)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => UpdateStatusLabel(message, color)));
+            return;
+        }
+
+        _statusLabel.Text = message;
+        _statusLabel.ForeColor = color ?? SystemColors.ControlText;
+    }
+
     private async void OnProvision()
     {
         if (!ValidateInputs())
@@ -486,25 +733,37 @@ public sealed class ProvisionBackendDialog : Form
         _errorLabel.Text = "Checking name availability...";
         _errorLabel.ForeColor = Color.DarkOrange;
         AppendLog("Starting Azure resource name availability checks...");
+        ShowLogTab();
 
         try
         {
+            var subscriptionId = GetSubscriptionText();
+            if (string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                _errorLabel.Text = "Subscription Id is required to verify names.";
+                _errorLabel.ForeColor = Color.Firebrick;
+                _provisionButton.Enabled = true;
+                return;
+            }
+
             var storageAccountName = _storageAccountText.Text.Trim().ToLowerInvariant();
             var functionAppName = _functionAppText.Text.Trim();
 
-            var availabilityError = await CheckAzureNameAvailabilityAsync(storageAccountName, functionAppName, _cancellationToken);
+            var availabilityError = await CheckAzureNameAvailabilityAsync(subscriptionId, storageAccountName, functionAppName, _cancellationToken);
             if (!string.IsNullOrEmpty(availabilityError))
             {
-                _errorLabel.Text = availabilityError;
+                var guidance = $"{availabilityError} Update the Configuration tab values and try again.";
+                _errorLabel.Text = guidance;
                 _errorLabel.ForeColor = Color.Firebrick;
-                AppendLog(availabilityError, isError: true);
+                AppendLog(guidance, isError: true);
+                ShowConfigurationTab();
                 _provisionButton.Enabled = true;
                 return;
             }
 
             _errorLabel.Text = string.Empty;
-            AppendLog("Name availability confirmed. Proceeding with provisioning.");
-            CloseWithResult(DialogResult.OK);
+            AppendLog("Name availability confirmed. Starting provisioning.");
+            await StartProvisioningAsync();
         }
         catch (Exception ex)
         {
@@ -519,6 +778,32 @@ public sealed class ProvisionBackendDialog : Form
     {
         DialogResult = result;
         Close();
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (_isProvisioning && e.CloseReason == CloseReason.UserClosing)
+        {
+            var confirm = MessageBox.Show(
+                this,
+                "Provisioning is still running. Are you sure you want to close this window?",
+                "Provisioning In Progress",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (confirm != DialogResult.Yes)
+            {
+                e.Cancel = true;
+                return;
+            }
+        }
+
+        if (_provisioningCompletedSuccessfully && DialogResult != DialogResult.OK)
+        {
+            DialogResult = DialogResult.OK;
+        }
+
+        base.OnFormClosing(e);
     }
 
     private bool ValidateInputs()
@@ -597,7 +882,7 @@ public sealed class ProvisionBackendDialog : Form
         return true;
     }
 
-    private async Task<string?> CheckAzureNameAvailabilityAsync(string storageAccountName, string functionAppName, CancellationToken cancellationToken)
+    private async Task<string?> CheckAzureNameAvailabilityAsync(string subscriptionId, string storageAccountName, string functionAppName, CancellationToken cancellationToken)
     {
         if (!AzureCliLocator.TryResolveExecutable(out var azPath, out var azError))
         {
@@ -612,9 +897,31 @@ public sealed class ProvisionBackendDialog : Form
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
         var token = timeoutCts.Token;
 
+        var storageError = await CheckStorageAccountAvailabilityAsync(azPath, storageAccountName, token).ConfigureAwait(false);
+        if (storageError is not null)
+        {
+            return storageError;
+        }
+
+        var functionError = await CheckFunctionAppAvailabilityAsync(azPath, subscriptionId, functionAppName, token).ConfigureAwait(false);
+        if (functionError is not null)
+        {
+            return functionError;
+        }
+
+        AppendLog("Azure CLI reports both names are available.");
+        return null;
+    }
+
+    private async Task<string?> CheckStorageAccountAvailabilityAsync(string azPath, string storageAccountName, CancellationToken token)
+    {
         AppendLog($"Running storage account availability check for '{storageAccountName}'...");
-        var storageCheckResult = await RunAzCommandAsync(azPath, $"storage account check-name --name {storageAccountName} --query nameAvailable -o tsv", token).ConfigureAwait(false);
-        LogResult("storage account check-name", storageCheckResult);
+        var storageCheckResult = await RunAzCommandAsync(
+            azPath,
+            $"storage account check-name --name {storageAccountName} --query nameAvailable -o tsv --only-show-errors",
+            token,
+            streamLogger: null).ConfigureAwait(false);
+        AppendLog($"storage account check-name exited with code {storageCheckResult.ExitCode}.");
         if (storageCheckResult.ExitCode != 0)
         {
             var error = BuildCliError("Storage account availability check failed.", storageCheckResult);
@@ -629,23 +936,36 @@ public sealed class ProvisionBackendDialog : Form
             return message;
         }
 
+        AppendLog($"Storage account name '{storageAccountName}' is available.");
+
+        return null;
+    }
+
+    private async Task<string?> CheckFunctionAppAvailabilityAsync(string azPath, string subscriptionId, string functionAppName, CancellationToken token)
+    {
         AppendLog($"Running Function App availability check for '{functionAppName}'...");
-        var functionCheckResult = await RunAzCommandAsync(azPath, $"functionapp check-name --name \"{functionAppName}\" --output json", token).ConfigureAwait(false);
-        LogResult("functionapp check-name", functionCheckResult);
-        if (functionCheckResult.ExitCode != 0 || string.IsNullOrWhiteSpace(functionCheckResult.StandardOutput))
-        {
-            var error = BuildCliError("Function App name availability check failed.", functionCheckResult);
-            AppendLog(error, isError: true);
-            return error;
-        }
+        var requestUri = $"https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Web/checkNameAvailability?api-version=2022-03-01";
+        var requestBody = JsonSerializer.Serialize(new { name = functionAppName, type = "Microsoft.Web/sites" });
+        var tempFile = Path.Combine(Path.GetTempPath(), $"cloudclipboard-checkname-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(tempFile, requestBody, Encoding.UTF8, token).ConfigureAwait(false);
 
         try
         {
+            var arguments = $"rest --method post --uri \"{requestUri}\" --headers Content-Type=application/json --body \"@{tempFile}\"";
+            var functionCheckResult = await RunAzCommandAsync(azPath, arguments, token, streamLogger: null).ConfigureAwait(false);
+            AppendLog($"functionapp check-name (REST) exited with code {functionCheckResult.ExitCode}.");
+            if (functionCheckResult.ExitCode != 0 || string.IsNullOrWhiteSpace(functionCheckResult.StandardOutput))
+            {
+                var error = BuildCliError("Function App name availability check failed.", functionCheckResult);
+                AppendLog(error, isError: true);
+                return error;
+            }
+
             using var doc = JsonDocument.Parse(functionCheckResult.StandardOutput);
             var nameAvailable = doc.RootElement.TryGetProperty("nameAvailable", out var availableProp) && availableProp.GetBoolean();
             if (nameAvailable)
             {
-                AppendLog("Azure CLI reports both names are available.");
+                AppendLog($"Function App name '{functionAppName}' is available.");
                 return null;
             }
 
@@ -668,19 +988,18 @@ public sealed class ProvisionBackendDialog : Form
             AppendLog(message, isError: true);
             return message;
         }
-
-        void LogResult(string action, AzCliResult result)
+        finally
         {
-            AppendLog($"{action} exited with code {result.ExitCode}.");
-
-            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+            try
             {
-                AppendLog(result.StandardOutput.Trim());
+                if (File.Exists(tempFile))
+                {
+                    File.Delete(tempFile);
+                }
             }
-
-            if (!string.IsNullOrWhiteSpace(result.StandardError))
+            catch
             {
-                AppendLog(result.StandardError.Trim(), isError: true);
+                // ignored
             }
         }
     }
@@ -704,7 +1023,7 @@ public sealed class ProvisionBackendDialog : Form
         return string.IsNullOrWhiteSpace(detail) ? prefix : $"{prefix} {detail}";
     }
 
-    private async Task<AzCliResult> RunAzCommandAsync(string azPath, string arguments, CancellationToken cancellationToken)
+    private async Task<AzCliResult> RunAzCommandAsync(string azPath, string arguments, CancellationToken cancellationToken, Action<string, bool>? streamLogger = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -724,14 +1043,22 @@ public sealed class ProvisionBackendDialog : Form
         {
             if (!string.IsNullOrEmpty(e.Data))
             {
-                stdout.AppendLine(e.Data);
+                lock (stdout)
+                {
+                    stdout.AppendLine(e.Data);
+                }
+                streamLogger?.Invoke(e.Data, false);
             }
         };
         process.ErrorDataReceived += (_, e) =>
         {
             if (!string.IsNullOrEmpty(e.Data))
             {
-                stderr.AppendLine(e.Data);
+                lock (stderr)
+                {
+                    stderr.AppendLine(e.Data);
+                }
+                streamLogger?.Invoke(e.Data, true);
             }
         };
 
@@ -786,6 +1113,59 @@ public sealed class ProvisionBackendDialog : Form
             PayloadContainer = _containerText.Text.Trim(),
             MetadataTable = _tableText.Text.Trim()
         };
+    }
+
+    private void ShowLogTab()
+    {
+        if (_tabControl.SelectedTab != _logTab)
+        {
+            _tabControl.SelectedTab = _logTab;
+        }
+    }
+
+    private void ShowConfigurationTab()
+    {
+        if (_tabControl.SelectedTab != _configTab)
+        {
+            _tabControl.SelectedTab = _configTab;
+        }
+    }
+
+    private void CopyLogSelection()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(CopyLogSelection));
+            return;
+        }
+
+        if (_logTextBox.TextLength == 0)
+        {
+            return;
+        }
+
+        if (_logTextBox.SelectionLength == 0)
+        {
+            _logTextBox.SelectAll();
+        }
+
+        _logTextBox.Copy();
+    }
+
+    private void SelectAllLogText()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(SelectAllLogText));
+            return;
+        }
+
+        if (_logTextBox.TextLength == 0)
+        {
+            return;
+        }
+
+        _logTextBox.SelectAll();
     }
 
     private void AppendLog(string message, bool isError = false)
@@ -848,3 +1228,15 @@ public sealed class ProvisionBackendDialog : Form
         base.Dispose(disposing);
     }
 }
+
+public sealed record ProvisionBackendDialogOptions(
+    string OwnerId,
+    string? SubscriptionId,
+    FunctionsDeploymentOptions Defaults,
+    IReadOnlyList<AzureSubscriptionInfo> Subscriptions,
+    IReadOnlyList<AzureLocationInfo> Locations);
+
+public sealed record ProvisionBackendDialogDependencies(
+    IAzureCliMetadataProvider MetadataProvider,
+    IBackendProvisioningService ProvisioningService,
+    IAppIconProvider IconProvider);

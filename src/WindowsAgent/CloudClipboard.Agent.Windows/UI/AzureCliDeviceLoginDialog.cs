@@ -51,6 +51,7 @@ public sealed class AzureCliDeviceLoginDialog : Form
         Text = "Azure CLI Sign-In";
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScroll = true;
         ClientSize = new Size(960, 480);
         MinimumSize = new Size(920, 460);
         MaximizeBox = false;

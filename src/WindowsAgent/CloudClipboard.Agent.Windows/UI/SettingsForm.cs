@@ -63,6 +63,7 @@ public sealed class SettingsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(900, 600);
         AutoScaleMode = AutoScaleMode.Dpi;
+            AutoScroll = true;
         AutoScaleDimensions = new SizeF(96F, 96F);
         Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
         Icon = _iconProvider.GetIcon(128);

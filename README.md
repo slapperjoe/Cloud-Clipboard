@@ -71,10 +71,19 @@ The binary lands under `src/WindowsAgent/CloudClipboard.Agent.Windows/bin/Releas
 - Use **Sign In** to trigger `az login --use-device-code`. The log will show explicit errors if `az` cannot be found or authentication fails.
 - Press **Deploy** to push the zip via `az functionapp deployment source config-zip`. Successful runs update `agentsettings.json` with the deployment metadata.
 - All deployment settings (app name, resource group, subscription, package path) live in the Settings window under *Deployment Defaults* so you can edit them alongside the rest of the agent configuration.
+- Recent enhancements:
+   - The provisioning dialog now streams curated log lines (no more opaque `true`/JSON blobs) and records the HTTP status/body when seeding the owner configuration fails, so troubleshooting is faster.
+   - Application Insights and Azure Web PubSub resources are created automatically inside the target resource group. Their connection strings are wired into the Function App settings, which keeps telemetry and realtime notifications working out-of-the-box.
+   - Required Azure CLI extensions (`application-insights`, `webpubsub`) are detected and installed on-the-fly so first-time provisioning doesn’t stall.
 
 ## Notification delivery
 
-The Functions backend now emits notification rows into the `Storage:NotificationsTable` table every time an upload succeeds. Agents call `/api/clipboard/{ownerId}/notifications?timeoutSeconds=30` using a long-poll request so the server can hold the HTTP connection open until either a notification is available or the timeout elapses. No extra Azure resources are required—Azurite or a standard storage account is enough. Keep `EnablePushNotifications` set to `true` (default) in `agentsettings.json` to enable the background poller; set it to `false` if you prefer the agent to refresh history on its slower polling schedule only.
+Uploads fan out across two channels:
+
+- **Azure Web PubSub (default)** – provisioning now creates a dedicated PubSub service inside the Function App resource group and injects its connection string into `Notifications:PubSub`. When the Windows agent has push enabled, it negotiates a WebSocket connection per owner and receives clipboard notifications instantly.
+- **Long-poll fallback** – regardless of PubSub availability, the Functions backend still emits rows into `Storage:NotificationsTable`. Agents call `/api/clipboard/{ownerId}/notifications?timeoutSeconds=30` to keep a “server push” style HTTP loop alive. If PubSub is down (or the user declines to switch transports), the agent automatically falls back to this path.
+
+Keep `EnablePushNotifications` set to `true` (default) in `agentsettings.json` to let the agent choose the best transport; set it to `false` if you prefer the slower history-refresh schedule only.
 
 ## Extensibility notes
 

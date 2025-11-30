@@ -37,6 +37,7 @@ public sealed class AzureCliInstallDialog : Form
         Text = "Azure CLI Required";
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
+            AutoScroll = true;
         ClientSize = new Size(1060, 520);
         MinimumSize = new Size(1020, 500);
         MinimizeBox = false;

@@ -16,6 +16,7 @@ public sealed class MetadataLoadingDialog : Form
         Text = "Preparing Provisioning Dialog";
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScroll = true;
         ClientSize = new Size(420, 160);
         MinimumSize = new Size(380, 150);
         MaximizeBox = false;

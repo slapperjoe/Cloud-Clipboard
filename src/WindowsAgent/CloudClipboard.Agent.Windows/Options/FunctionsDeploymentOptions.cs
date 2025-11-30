@@ -12,6 +12,8 @@ public sealed class FunctionsDeploymentOptions
     public string Location { get; set; } = "eastus";
     public string StorageAccountName { get; set; } = string.Empty;
     public string PlanName { get; set; } = string.Empty;
+    public string WebPubSubName { get; set; } = string.Empty;
+    public string AppInsightsName { get; set; } = string.Empty;
     public string PayloadContainer { get; set; } = "clipboardpayloads";
     public string MetadataTable { get; set; } = "ClipboardMetadata";
     public string? LastPackageHash { get; set; }
