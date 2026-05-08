@@ -1,0 +1,80 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-CloudClipboard.Agent-1ebb56b3-701a-4bda-a059-8fdfa111bf99</UserSecretsId>
+    <OutputType>Exe</OutputType>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseWindowsForms Condition="'$(OS)' == 'Windows_NT'">true</UseWindowsForms>
+    <UseWindowsForms Condition="'$(OS)' != 'Windows_NT'">false</UseWindowsForms>
+    <DefineConstants Condition="'$(OS)' == 'Windows_NT'">$(DefineConstants);WINDOWS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Core\CloudClipboard.Core\CloudClipboard.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <PackageReference Include="Azure.Messaging.WebPubSub.Client" Version="1.0.0" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FunctionsZipSourceProject Include="..\..\Functions\CloudClipboard.Functions\CloudClipboard.Functions.csproj" />
+  </ItemGroup>
+
+  <Target Name="BuildFunctionsZip" BeforeTargets="GetCopyToOutputDirectoryItems" Condition="'$(BuildingSolutionFile)' != 'true'">
+    <MSBuild Projects="@(FunctionsZipSourceProject)"
+             Targets="Build"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <ItemGroup>
+    <Content Include="$(FunctionsZipPath)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>$(FunctionsZipFileName)</Link>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings*.json">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </None>
+    <Content Update="appsettings*.json">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <Target Name="IncrementVersionOnBuild"
+          BeforeTargets="GenerateAssemblyInfo"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(RunIncrementVersionOnBuild)' != 'false'">
+    <PropertyGroup>
+      <_VersionFile>$(RepositoryRoot)build\Version.props</_VersionFile>
+      <_VersionToolProject>$(RepositoryRoot)build\Versioning\VersionIncrementer.csproj</_VersionToolProject>
+    </PropertyGroup>
+
+    <Error Condition="!Exists('$(_VersionFile)')" Text="Version file '$(_VersionFile)' does not exist." />
+    <Error Condition="!Exists('$(_VersionToolProject)')" Text="Version incrementer project '$(_VersionToolProject)' does not exist." />
+
+    <Exec Command="dotnet run --project &quot;$(_VersionToolProject)&quot; --configuration Release -- &quot;$(_VersionFile)&quot; CloudClipboardVersion"
+          IgnoreExitCode="false" />
+
+    <XmlPeek XmlInputPath="$(_VersionFile)"
+             Query="/Project/PropertyGroup/CloudClipboardVersion">
+      <Output TaskParameter="Result" PropertyName="_UpdatedVersion" />
+    </XmlPeek>
+
+    <PropertyGroup>
+      <CloudClipboardVersion>$(_UpdatedVersion)</CloudClipboardVersion>
+      <Version>$(_UpdatedVersion)</Version>
+      <FileVersion>$(_UpdatedVersion)</FileVersion>
+      <AssemblyVersion>$(_UpdatedVersion)</AssemblyVersion>
+    </PropertyGroup>
+  </Target>
+</Project>

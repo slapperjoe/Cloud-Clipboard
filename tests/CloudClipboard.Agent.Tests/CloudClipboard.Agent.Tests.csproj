@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
@@ -19,6 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\WindowsAgent\CloudClipboard.Agent.Windows\CloudClipboard.Agent.Windows.csproj" />
+    <ProjectReference Include="..\..\src\WindowsAgent\CloudClipboard.Agent\CloudClipboard.Agent.csproj" />
   </ItemGroup>
 </Project>

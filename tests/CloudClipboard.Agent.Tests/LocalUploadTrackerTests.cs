@@ -1,5 +1,5 @@
 using System;
-using CloudClipboard.Agent.Windows.Services;
+using CloudClipboard.Agent.Services;
 using Xunit;
 
 namespace CloudClipboard.Agent.Tests;
