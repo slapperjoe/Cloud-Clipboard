@@ -1435,10 +1435,285 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
     }
 }
 #else
-    class TrayIconHostedService : Microsoft.Extensions.Hosting.IHostedService
+    namespace CloudClipboard.Agent.UI;
+
+    public sealed class TrayIconHostedService : BackgroundService
     {
-        public System.Threading.Tasks.Task StartAsync(System.Threading.CancellationToken cancellationToken) => System.Threading.Tasks.Task.CompletedTask;
-        public System.Threading.Tasks.Task StopAsync(System.Threading.CancellationToken cancellationToken) => System.Threading.Tasks.Task.CompletedTask;
-        public System.Threading.Tasks.Task DisposeAsync() => System.Threading.Tasks.Task.CompletedTask;
+        private readonly IClipboardHistoryCache _historyCache;
+        private readonly ClipboardPasteService _pasteService;
+        private readonly ICloudClipboardClient _client;
+        private readonly IOptionsMonitor<AgentOptions> _options;
+        private readonly IAgentSettingsStore _settingsStore;
+        private readonly IOwnerStateCache _ownerStateCache;
+        private readonly ILogger<TrayIconHostedService> _logger;
+        private readonly IManualUploadStore _manualUploadStore;
+        private readonly IClipboardUploadQueue _uploadQueue;
+        private readonly IPinnedClipboardStore _pinnedStore;
+        private readonly IHostApplicationLifetime _appLifetime;
+        private ITrayIcon _trayIcon;
+        private readonly SemaphoreSlim _refreshLock = new(1, 1);
+
+        public TrayIconHostedService(
+            IClipboardHistoryCache historyCache,
+            ClipboardPasteService pasteService,
+            ICloudClipboardClient client,
+            IOptionsMonitor<AgentOptions> options,
+            IAgentSettingsStore settingsStore,
+            IOwnerStateCache ownerStateCache,
+            ILogger<TrayIconHostedService> logger,
+            IManualUploadStore manualUploadStore,
+            IClipboardUploadQueue uploadQueue,
+            IPinnedClipboardStore pinnedStore,
+            IHostApplicationLifetime appLifetime,
+            ITrayIcon trayIcon)
+        {
+            _historyCache = historyCache;
+            _pasteService = pasteService;
+            _client = client;
+            _options = options;
+            _settingsStore = settingsStore;
+            _ownerStateCache = ownerStateCache;
+            _logger = logger;
+            _manualUploadStore = manualUploadStore;
+            _uploadQueue = uploadQueue;
+            _pinnedStore = pinnedStore;
+            _appLifetime = appLifetime;
+            _trayIcon = trayIcon;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            _trayIcon.ItemActivated += OnTrayItemActivated;
+            _trayIcon.Show();
+            await RefreshTrayMenu();
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await RefreshTrayMenu();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error refreshing tray menu");
+                }
+                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+            }
+        }
+
+        private async Task RefreshTrayMenu()
+        {
+            if (await _refreshLock.WaitAsync(TimeSpan.FromSeconds(10)))
+            {
+                try
+                {
+                    await UpdateTrayMenu();
+                }
+                finally
+                {
+                    _refreshLock.Release();
+                }
+            }
+        }
+
+        private async Task UpdateTrayMenu()
+        {
+            var options = _options.CurrentValue;
+            var settings = _settingsStore.Load();
+            if (string.IsNullOrEmpty(settings?.OwnerId))
+            {
+                _trayIcon.SetMenu(BuildNotConfiguredMenu());
+                return;
+            }
+
+            try
+            {
+                var snapshot = _historyCache.Snapshot;
+                var isFullSync = options.SyncDirection == ClipboardSyncDirection.Full;
+                var isUploadEnabled = options.IsUploadEnabled;
+
+                _trayIcon.SetMenu(BuildMenu(snapshot, isFullSync, isUploadEnabled));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to build tray menu");
+            }
+        }
+
+        private string BuildMenu(IReadOnlyList<ClipboardItemDto> items, bool isFullSync, bool isUploadEnabled)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("<menu>");
+
+            // Paste item (most recent)
+            if (items.Count > 0)
+            {
+                var item = items[0];
+                var label = GetItemLabel(item);
+                sb.AppendFormat("<menuitem name=\"paste\" label=\"Paste: {0}\" type=\"ITEM\"/>", label);
+            }
+
+            // Pinned items
+            var pinned = _pinnedStore.Snapshot;
+            if (pinned != null && pinned.Count > 0)
+            {
+                sb.AppendLine("<menuitem name=\"pinned_header\" label=\"--- Pinned ---\" type=\"SEPARATOR\"/>");
+                foreach (var pinnedItem in pinned.Take(5))
+                {
+                    sb.AppendFormat("<menuitem name=\"pin_{0}\" label=\"Pin: {1}\" type=\"ITEM\"/>",
+                        pinnedItem.Id, Truncate(pinnedItem.DisplayLabel, 30));
+                }
+            }
+
+            sb.AppendLine("<menuitem name=\"separator1\" type=\"SEPARATOR\"/>");
+
+            // Sync direction indicator
+            string syncLabel = isFullSync ? "Sync: Full" : (isUploadEnabled ? "Sync: Upload Only" : "Sync: Download Only");
+            sb.AppendLine($"<menuitem name=\"sync_status\" label=\"{syncLabel}\" type=\"ITEM\" enabled=\"false\"/>");
+
+            sb.AppendLine("<menuitem name=\"separator2\" type=\"SEPARATOR\"/>");
+            sb.AppendLine("<menuitem name=\"manual_upload\" label=\"Manual Upload\" type=\"ITEM\"/>");
+            sb.AppendLine("<menuitem name=\"manual_download\" label=\"Manual Download\" type=\"ITEM\"/>");
+
+            sb.AppendLine("<menuitem name=\"separator3\" type=\"SEPARATOR\"/>");
+            sb.AppendLine("<menuitem name=\"settings\" label=\"Settings\" type=\"ITEM\"/>");
+            sb.AppendLine("<menuitem name=\"separator4\" type=\"SEPARATOR\"/>");
+            sb.AppendLine("<menuitem name=\"quit\" label=\"Quit\" type=\"ITEM\"/>");
+
+            sb.AppendLine("</menu>");
+            return sb.ToString();
+        }
+
+        private string BuildNotConfiguredMenu()
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("<menu>");
+            sb.AppendLine("<menuitem name=\"setup\" label=\"Run Setup\" type=\"ITEM\"/>");
+            sb.AppendLine("<menuitem name=\"separator\" type=\"SEPARATOR\"/>");
+            sb.AppendLine("<menuitem name=\"quit\" label=\"Quit\" type=\"ITEM\"/>");
+            sb.AppendLine("</menu>");
+            return sb.ToString();
+        }
+
+        private void OnTrayItemActivated(string itemName)
+        {
+            _logger.LogInformation("Tray menu item activated: {ItemName}", itemName);
+
+            try
+            {
+                switch (itemName)
+                {
+                    case "paste":
+                        HandlePaste();
+                        break;
+                    case "manual_upload":
+                        HandleManualUpload();
+                        break;
+                    case "manual_download":
+                        HandleManualDownload();
+                        break;
+                    case "setup":
+                        HandleSetup();
+                        break;
+                    case "settings":
+                        HandleSettings();
+                        break;
+                    case "quit":
+                        _logger.LogInformation("Quit requested via tray menu");
+                        _appLifetime.StopApplication();
+                        break;
+                    default:
+                        if (itemName.StartsWith("pin_"))
+                        {
+                            HandlePinClick(itemName);
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling tray item: {ItemName}", itemName);
+            }
+        }
+
+        private void HandlePaste()
+        {
+            var snapshot = _historyCache.Snapshot;
+            if (snapshot.Count > 0)
+            {
+                _ = _pasteService.PasteAsync(snapshot[0]);
+            }
+        }
+
+        private void HandleManualUpload()
+        {
+            _logger.LogInformation("Manual upload triggered from tray menu");
+            // The upload will be picked up by ClipboardSyncWorker
+        }
+
+        private void HandleManualDownload()
+        {
+            _logger.LogInformation("Manual download triggered from tray menu");
+            var options = _options.CurrentValue;
+            var settings = _settingsStore.Load();
+            if (string.IsNullOrEmpty(settings?.OwnerId))
+                return;
+            _ = _client.ListAsync(settings.OwnerId, options.HistoryLength).ContinueWith(t =>
+            {
+                if (!t.IsFaulted && !t.IsCanceled)
+                {
+                    _historyCache.Update(t.Result);
+                }
+            });
+        }
+
+        private void HandleSetup()
+        {
+            _logger.LogInformation("Setup triggered from tray menu");
+        }
+
+        private void HandleSettings()
+        {
+            var settingsPath = AgentSettingsPathProvider.GetSettingsPath();
+            _logger.LogInformation("Settings file location: {Path}", settingsPath);
+        }
+
+        private void HandlePinClick(string itemName)
+        {
+            var id = itemName.Replace("pin_", "");
+            _pinnedStore.TryGet(id, out var pinnedItem);
+            if (pinnedItem != null)
+            {
+                _logger.LogInformation("Pinned item clicked: {Id}", id);
+                var settings = _settingsStore.Load();
+                if (!string.IsNullOrEmpty(settings?.OwnerId))
+                {
+                    _ = _client.DownloadAsync(settings.OwnerId, id).ContinueWith(t =>
+                    {
+                        if (!t.IsFaulted && !t.IsCanceled && t.Result != null)
+                        {
+                            _ = _pasteService.PasteAsync(t.Result);
+                        }
+                    });
+                }
+            }
+        }
+
+        private static string GetItemLabel(ClipboardItemDto item)
+        {
+            if (!string.IsNullOrEmpty(item.FileName))
+                return item.FileName;
+            return item.ContentType switch
+            {
+                "text/plain" => "Text",
+                "image/png" => "Image",
+                _ => item.ContentType,
+            };
+        }
+
+        private static string Truncate(string text, int maxLength)
+        {
+            return text.Length > maxLength ? text.Substring(0, maxLength) + "..." : text;
+        }
     }
 #endif

@@ -43,13 +43,26 @@ public sealed class ClipboardPasteService
     private async Task ExtractZipToTempAsync(byte[] zipBytes)
     {
         var tempFolder = Path.Combine(Path.GetTempPath(), "CloudClipboard", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempFolder);
-        using var archiveStream = new MemoryStream(zipBytes);
-        using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Read);
-        archive.ExtractToDirectory(tempFolder);
+        try
+        {
+            Directory.CreateDirectory(tempFolder);
+            using var archiveStream = new MemoryStream(zipBytes);
+            using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Read);
+            archive.ExtractToDirectory(tempFolder);
 
-        var files = Directory.GetFiles(tempFolder).ToList();
-        await _clipboardAccess.WriteFilesAsync(files.ToArray());
-        await Task.CompletedTask;
+            var files = Directory.GetFiles(tempFolder).ToList();
+            await _clipboardAccess.WriteFilesAsync(files.ToArray());
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempFolder, true);
+            }
+            catch
+            {
+                // Ignore cleanup failures
+            }
+        }
     }
 }

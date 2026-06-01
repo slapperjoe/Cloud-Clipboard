@@ -460,10 +460,169 @@ public sealed class ClipboardPushListener : BackgroundService
     }
 }
 #else
-    class ClipboardPushListener : Microsoft.Extensions.Hosting.IHostedService
+    namespace CloudClipboard.Agent.Services;
+
+    public sealed class ClipboardPushListener : BackgroundService
     {
-        public System.Threading.Tasks.Task StartAsync(System.Threading.CancellationToken cancellationToken) => System.Threading.Tasks.Task.CompletedTask;
-        public System.Threading.Tasks.Task StopAsync(System.Threading.CancellationToken cancellationToken) => System.Threading.Tasks.Task.CompletedTask;
-        public System.Threading.Tasks.Task DisposeAsync() => System.Threading.Tasks.Task.CompletedTask;
+        private readonly ILogger<ClipboardPushListener> _logger;
+        private readonly IOptionsMonitor<AgentOptions> _options;
+        private readonly ICloudClipboardClient _client;
+        private readonly IClipboardHistoryCache _historyCache;
+        private readonly IAgentSettingsStore _settingsStore;
+        private readonly ILocalUploadTracker _localUploadTracker;
+        private readonly SemaphoreSlim _refreshLock = new(1, 1);
+
+        public ClipboardPushListener(
+            ILogger<ClipboardPushListener> logger,
+            IOptionsMonitor<AgentOptions> options,
+            ICloudClipboardClient client,
+            IClipboardHistoryCache historyCache,
+            IAgentSettingsStore settingsStore,
+            ILocalUploadTracker localUploadTracker)
+        {
+            _logger = logger;
+            _options = options;
+            _client = client;
+            _historyCache = historyCache;
+            _settingsStore = settingsStore;
+            _localUploadTracker = localUploadTracker;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                if (!ShouldConnect(out var ownerId))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    continue;
+                }
+
+                try
+                {
+                    await PollLoopAsync(ownerId, stoppingToken);
+                }
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                {
+                    // Swallow and retry if the host did not request shutdown.
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Notification listener failed for {OwnerId}", ownerId);
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                }
+            }
+        }
+
+        private bool ShouldConnect(out string ownerId)
+        {
+            var options = _options.CurrentValue;
+            ownerId = options.OwnerId;
+            return options.EnablePushNotifications && options.IsDownloadEnabled && !string.IsNullOrWhiteSpace(ownerId);
+        }
+
+        private async Task PollLoopAsync(string ownerId, CancellationToken cancellationToken)
+        {
+            var timeoutSeconds = GetPollTimeoutSeconds();
+            _logger.LogInformation("Starting notification polling for {OwnerId}", ownerId);
+            var started = DateTimeOffset.UtcNow;
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (!ShouldConnect(out var currentOwner) || !string.Equals(currentOwner, ownerId, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogInformation("Stopping notification polling for {OwnerId}", ownerId);
+                    return;
+                }
+
+                if (!_options.CurrentValue.IsDownloadEnabled)
+                {
+                    _logger.LogInformation("Downloads disabled; exiting polling loop for {OwnerId}", ownerId);
+                    return;
+                }
+
+                IReadOnlyList<ClipboardNotificationEvent> events;
+                try
+                {
+                    events = await _client.PollNotificationsAsync(ownerId, timeoutSeconds, cancellationToken).ConfigureAwait(false);
+                }
+                catch (HttpRequestException httpEx)
+                {
+                    if (httpEx.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        _logger.LogInformation("Notifications endpoint unavailable for {OwnerId}; stopping polling loop", ownerId);
+                        return;
+                    }
+
+                    _logger.LogDebug("Notification poll returned {StatusCode} for {OwnerId}", httpEx.StatusCode, ownerId);
+
+                    await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+                    continue;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to poll notifications for {OwnerId}", ownerId);
+                    await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+                    continue;
+                }
+
+                if (events.Count == 0)
+                {
+                    continue;
+                }
+
+                var hasRemoteEvent = false;
+                foreach (var notification in events)
+                {
+                    if (string.Equals(notification.OwnerId, ownerId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (_localUploadTracker.TryConsume(ownerId, notification.ItemId))
+                        {
+                            _logger.LogDebug("Ignored local notification for {ItemId}", notification.ItemId);
+                            continue;
+                        }
+
+                        hasRemoteEvent = true;
+                        break;
+                    }
+                }
+
+                if (hasRemoteEvent)
+                {
+                    await RefreshHistoryAsync(ownerId).ConfigureAwait(false);
+                }
+            }
+        }
+
+        private async Task RefreshHistoryAsync(string ownerId)
+        {
+            if (!_refreshLock.Wait(0))
+                return;
+
+            try
+            {
+                var items = await _client.ListAsync(ownerId, _options.CurrentValue.HistoryLength, CancellationToken.None).ConfigureAwait(false);
+                _historyCache.Update(items);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to refresh history after push notification");
+            }
+            finally
+            {
+                _refreshLock.Release();
+            }
+        }
+
+        private int GetPollTimeoutSeconds()
+        {
+            var options = _options.CurrentValue;
+            var timeout = Math.Max(5, options.PushReconnectSeconds);
+            return Math.Min(timeout, 55);
+        }
     }
 #endif

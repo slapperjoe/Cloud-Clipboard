@@ -30,14 +30,14 @@ public sealed class LinuxClipboardAccess : IClipboardAccess
         return Task.FromResult(text);
     }
 
-    public Task<byte[]?> ReadImageAsync(CancellationToken ct = default)
+    public async Task<byte[]?> ReadImageAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var image = ReadImage("wl-paste", "-t", "image/png");
-        if (image != null && image.Length > 0)
-            return Task.FromResult(image);
-        image = ReadImage("xclip", "-o", "-t", "image/png");
-        return Task.FromResult(image);
+        var image = await ReadImageAsync("wl-paste", "-t", "image/png");
+        if (image.Length > 0)
+            return image;
+        image = await ReadImageAsync("xclip", "-o", "-t", "image/png");
+        return image;
     }
 
     public Task WriteTextAsync(string text, CancellationToken ct = default)
@@ -105,7 +105,7 @@ public sealed class LinuxClipboardAccess : IClipboardAccess
         }
     }
 
-    private byte[]? ReadImage(string command, params string[] args)
+    private Task<byte[]> ReadImageAsync(string command, params string[] args)
     {
         try
         {
@@ -117,18 +117,19 @@ public sealed class LinuxClipboardAccess : IClipboardAccess
                 UseShellExecute = false,
             };
             using var process = Process.Start(psi);
-            var output = process!.StandardOutput.ReadToEnd();
+            // Read raw binary from StandardOutput.BaseStream to avoid UTF-8 corruption
+            using var baseStream = process!.StandardOutput.BaseStream;
+            var buffer = new byte[0];
+            using var ms = new MemoryStream();
+            baseStream.CopyTo(ms);
+            buffer = ms.ToArray();
             process.WaitForExit();
-            if (command.StartsWith("wl-"))
-            {
-                return output?.Select(c => (byte)c).ToArray();
-            }
-            return null;
+            return Task.FromResult(buffer);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Failed to read clipboard image via {Command}", command);
-            return null;
+            return Task.FromResult(Array.Empty<byte>());
         }
     }
 
