@@ -3,6 +3,7 @@
 ## SDK & Prerequisites
 
 - **SDK**: .NET 10 (pinned to `10.0.104` via `global.json`; `rollForward: latestFeature`)
+- **SDK location**: Installed locally at `~/.dotnet`. Add to PATH before use: `export PATH="$HOME/.dotnet:$PATH"`
 - **Storage emulator**: [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite)
 - **Functions Core Tools** (`func`) for local host
 - **Azure CLI** (`az`) for deployment from the agent tray
@@ -56,6 +57,8 @@ dotnet publish src/WindowsAgent/CloudClipboard.Agent/CloudClipboard.Agent.csproj
 
 # Start local stack (Functions host only)
 pwsh -ExecutionPolicy Bypass -File ./scripts/run-local-stack.ps1 -SkipAgent
+# Or with Bash (Linux):
+bash ./scripts/run-local-stack.sh --skip-agent
 ```
 
 **Auto-versioning**: Each Agent build increments `build/Version.props` via the `VersionIncrementer` tool. The `Directory.Build.props` file propagates `CloudClipboardVersion` to `Version`, `FileVersion`, and `AssemblyVersion`.

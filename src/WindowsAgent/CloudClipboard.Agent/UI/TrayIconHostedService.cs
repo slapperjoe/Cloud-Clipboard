@@ -1484,7 +1484,7 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _trayIcon.ItemActivated += OnTrayItemActivated;
-            _trayIcon.Show();
+            await _trayIcon.ShowAsync();
             await RefreshTrayMenu();
 
             while (!stoppingToken.IsCancellationRequested)

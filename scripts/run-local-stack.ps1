@@ -12,7 +12,7 @@ function Write-Step {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $functionsPath = Join-Path $repoRoot "src\Functions\CloudClipboard.Functions"
-$agentPath = Join-Path $repoRoot "src\WindowsAgent\CloudClipboard.Agent.Windows"
+$agentPath = Join-Path $repoRoot "src\WindowsAgent\CloudClipboard.Agent"
 
 if (-not (Test-Path $functionsPath)) {
     throw "Functions project path not found: $functionsPath"

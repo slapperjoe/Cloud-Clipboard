@@ -61,6 +61,14 @@ internal static class AzureCliLocator
             return true;
         }
 
+        // Linux/Unix bare binary (no extension)
+        var az = Path.Combine(directory, "az");
+        if (File.Exists(az))
+        {
+            executablePath = az;
+            return true;
+        }
+
         executablePath = string.Empty;
         return false;
     }

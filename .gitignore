@@ -10,3 +10,5 @@ build/Versioning/bin/*
 build/Versioning/obj/*
 tests/**/bin/*
 tests/**/obj/*
+__azurite_db_*.json
+__blobstorage__

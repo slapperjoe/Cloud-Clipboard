@@ -42,6 +42,9 @@ public sealed class ClipboardSyncWorker : BackgroundService
         _localUploadTracker = localUploadTracker;
     }
 
+    private int _consecutiveConnectionErrors;
+    private const int MaxBackoffSeconds = 30;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await foreach (var request in _queue.ReadAllAsync(stoppingToken))
@@ -66,13 +69,38 @@ public sealed class ClipboardSyncWorker : BackgroundService
                     _localUploadTracker.Record(request.OwnerId, uploadedItem.Id, uploadedItem.CreatedUtc);
                     UpdateHistoryAfterUpload(uploadedItem);
                 }
+                _consecutiveConnectionErrors = 0;
+            }
+            catch (OperationCanceledException)
+            {
+                break;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to upload clipboard item");
                 _diagnostics.RecordUploadFailure(DateTimeOffset.UtcNow);
+
+                if (IsConnectionRefused(ex))
+                {
+                    _consecutiveConnectionErrors++;
+                    var backoff = Math.Min(1 << (_consecutiveConnectionErrors - 1), MaxBackoffSeconds);
+                    _logger.LogWarning("Connection refused ({Count} consecutive errors) — backing off for {Seconds}s.", _consecutiveConnectionErrors, backoff);
+                    await Task.Delay(TimeSpan.FromSeconds(backoff), stoppingToken).ConfigureAwait(false);
+                }
             }
         }
+    }
+
+    private static bool IsConnectionRefused(Exception ex)
+    {
+        var current = ex;
+        while (current is not null)
+        {
+            if (current is System.Net.Http.HttpRequestException or System.Net.Sockets.SocketException)
+                return true;
+            current = current.InnerException;
+        }
+        return false;
     }
 
     private async Task WaitForUploadsAsync(CancellationToken stoppingToken)

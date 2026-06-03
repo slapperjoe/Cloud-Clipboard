@@ -53,9 +53,13 @@ public sealed class LinuxTrayIcon : ITrayIcon
 
         _connection.StateChanged += OnStateChanged;
 
+        const string BusName = "com.cloudclipboard.agent";
+
         try
         {
             await _connection.ConnectAsync();
+            await _connection.RegisterServiceAsync(BusName);
+            _logger.LogInformation("D-Bus service name {BusName} registered.", BusName);
             await _connection.RegisterObjectAsync(_item);
             await _connection.RegisterObjectAsync(_menu);
             _logger.LogInformation("D-Bus StatusNotifierItem registered.");
@@ -77,6 +81,8 @@ public sealed class LinuxTrayIcon : ITrayIcon
                     _connection.UnregisterObject(_item);
                 if (_menu != null)
                     _connection.UnregisterObject(_menu);
+                _connection.StateChanged -= OnStateChanged;
+                // Disposing the connection automatically unregisters the service name and objects
                 _connection.Dispose();
             }
             catch (Exception ex)

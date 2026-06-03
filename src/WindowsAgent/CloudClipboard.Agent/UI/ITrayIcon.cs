@@ -8,7 +8,7 @@ public interface ITrayIcon
     /// <summary>
     /// Shows the tray icon.
     /// </summary>
-    void Show();
+    Task ShowAsync();
 
     /// <summary>
     /// Hides the tray icon.

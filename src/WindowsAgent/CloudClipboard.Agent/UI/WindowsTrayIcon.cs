@@ -31,11 +31,11 @@ public sealed class WindowsTrayIcon : ITrayIcon, IDisposable
         _iconProvider = iconProvider;
     }
 
-    public void Show()
+    public Task ShowAsync()
     {
         if (_uiThread is not null && _uiThread.IsAlive)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         _uiThread = new Thread(() =>
@@ -76,6 +76,7 @@ public sealed class WindowsTrayIcon : ITrayIcon, IDisposable
 
         _uiThread.SetApartmentState(ApartmentState.STA);
         _uiThread.Start();
+        return Task.CompletedTask;
     }
 
     public void Hide()
@@ -176,7 +177,7 @@ namespace CloudClipboard.Agent.UI;
 public sealed class WindowsTrayIcon : ITrayIcon
 {
     public event Action<string>? ItemActivated;
-    public void Show() { }
+    public Task ShowAsync() => Task.CompletedTask;
     public void Hide() { }
     public void SetTooltip(string _) { }
     public void SetMenu(string _) { }

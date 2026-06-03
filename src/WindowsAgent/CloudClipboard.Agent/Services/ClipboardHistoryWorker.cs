@@ -38,6 +38,9 @@ public sealed class ClipboardHistoryWorker : BackgroundService
         _cache.HistoryChanged += OnHistoryChanged;
     }
 
+    private int _consecutiveConnectionErrors;
+    private const int MaxBackoffSeconds = 30;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -72,6 +75,7 @@ public sealed class ClipboardHistoryWorker : BackgroundService
                 var items = await _client.ListAsync(options.OwnerId, options.HistoryLength, stoppingToken);
                 _cache.Update(items);
                 _lastRefreshUtc = DateTimeOffset.UtcNow;
+                _consecutiveConnectionErrors = 0;
 
                 if (!_autoPastePerformed && !_ownerStateCache.IsPaused && options.AutoPasteLatestOnStartup && items.Count > 0)
                 {
@@ -95,6 +99,22 @@ public sealed class ClipboardHistoryWorker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to refresh clipboard history");
+
+                if (IsConnectionRefused(ex))
+                {
+                    _consecutiveConnectionErrors++;
+                    var backoff = Math.Min(1 << (_consecutiveConnectionErrors - 1), MaxBackoffSeconds);
+                    _logger.LogWarning("Connection refused ({Count} consecutive errors) — backing off for {Seconds}s.", _consecutiveConnectionErrors, backoff);
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(backoff), stoppingToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    continue;
+                }
             }
 
             var delay = TimeSpan.FromSeconds(Math.Max(2, _options.CurrentValue.HistoryPollSeconds));
@@ -107,6 +127,18 @@ public sealed class ClipboardHistoryWorker : BackgroundService
                 break;
             }
         }
+    }
+
+    private static bool IsConnectionRefused(Exception ex)
+    {
+        var current = ex;
+        while (current is not null)
+        {
+            if (current is System.Net.Http.HttpRequestException or System.Net.Sockets.SocketException)
+                return true;
+            current = current.InnerException;
+        }
+        return false;
     }
 
     public override void Dispose()

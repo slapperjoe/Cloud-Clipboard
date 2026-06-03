@@ -27,6 +27,9 @@ public sealed class OwnerStateWorker : BackgroundService
         _logger = logger;
     }
 
+    private int _consecutiveConnectionErrors;
+    private const int MaxBackoffSeconds = 30;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -42,6 +45,7 @@ public sealed class OwnerStateWorker : BackgroundService
 
                 var state = await _client.GetStateAsync(ownerId, stoppingToken);
                 _cache.Update(state);
+                _consecutiveConnectionErrors = 0;
             }
             catch (OperationCanceledException)
             {
@@ -50,6 +54,22 @@ public sealed class OwnerStateWorker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to refresh owner state");
+
+                if (IsConnectionRefused(ex))
+                {
+                    _consecutiveConnectionErrors++;
+                    var backoff = Math.Min(1 << (_consecutiveConnectionErrors - 1), MaxBackoffSeconds);
+                    _logger.LogWarning("Connection refused ({Count} consecutive errors) — backing off for {Seconds}s.", _consecutiveConnectionErrors, backoff);
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(backoff), stoppingToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    continue;
+                }
             }
 
             var delaySeconds = Math.Max(5, _options.CurrentValue.OwnerStatePollSeconds);
@@ -62,5 +82,17 @@ public sealed class OwnerStateWorker : BackgroundService
                 break;
             }
         }
+    }
+
+    private static bool IsConnectionRefused(Exception ex)
+    {
+        var current = ex;
+        while (current is not null)
+        {
+            if (current is System.Net.Http.HttpRequestException or System.Net.Sockets.SocketException)
+                return true;
+            current = current.InnerException;
+        }
+        return false;
     }
 }
