@@ -39,6 +39,7 @@ public sealed class FirstRunConfigurationService : BackgroundService
         ILogger<FirstRunConfigurationService> logger,
         IAgentSettingsStore settingsStore,
         ICloudClipboardClient client,
+        HttpCloudClipboardClient rawClient,
         IAzureCliAuthenticator authenticator,
         IAzureCliMetadataProvider metadataProvider,
         IBackendProvisioningService provisioningService,
@@ -49,6 +50,7 @@ public sealed class FirstRunConfigurationService : BackgroundService
         _logger = logger;
         _settingsStore = settingsStore;
         _client = client;
+        _rawClient = rawClient;
         _authenticator = authenticator;
         _metadataProvider = metadataProvider;
         _provisioningService = provisioningService;
@@ -256,6 +258,7 @@ public sealed class FirstRunConfigurationService : BackgroundService
         private readonly ILogger<FirstRunConfigurationService> _logger;
         private readonly IAgentSettingsStore _settingsStore;
         private readonly ICloudClipboardClient _client;
+        private readonly HttpCloudClipboardClient _rawClient;
         private readonly IAzureCliAuthenticator _authenticator;
         private readonly IAzureCliMetadataProvider _metadataProvider;
         private readonly IBackendProvisioningService _provisioningService;
@@ -267,6 +270,7 @@ public sealed class FirstRunConfigurationService : BackgroundService
             ILogger<FirstRunConfigurationService> logger,
             IAgentSettingsStore settingsStore,
             ICloudClipboardClient client,
+            HttpCloudClipboardClient rawClient,
             IAzureCliAuthenticator authenticator,
             IAzureCliMetadataProvider metadataProvider,
             IBackendProvisioningService provisioningService,
@@ -277,6 +281,7 @@ public sealed class FirstRunConfigurationService : BackgroundService
             _logger = logger;
             _settingsStore = settingsStore;
             _client = client;
+            _rawClient = rawClient;
             _authenticator = authenticator;
             _metadataProvider = metadataProvider;
             _provisioningService = provisioningService;
@@ -399,7 +404,7 @@ public sealed class FirstRunConfigurationService : BackgroundService
         {
             try
             {
-                var remote = await _client.GetOwnerConfigurationAsync(ownerId, cancellationToken).ConfigureAwait(false);
+                var remote = await _rawClient.GetOwnerConfigurationAsync(ownerId, cancellationToken).ConfigureAwait(false);
                 if (remote is null || string.IsNullOrWhiteSpace(remote.ConfigurationJson))
                 {
                     _logger.LogInformation("No remote configuration found for {OwnerId} during bootstrap.", ownerId);

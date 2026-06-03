@@ -34,11 +34,13 @@ public sealed class AvaloniaProvisionDialog
         };
 
         AppBuilder.Configure<Application>()
-            .UsePlatformDetect()
+            .UseX11()
             .Start((app, args) =>
             {
                 _window = CreateWindow(options, dependencies, tcs, progress, cancellationToken);
                 _window.Show();
+                _window.Activate();
+                _window.Focus();
                 app.Run(_window);
             }, Array.Empty<string>());
 

@@ -19,7 +19,7 @@ public sealed class LinuxTrayIcon : ITrayIcon
     private bool _visible;
     private string _tooltip = "Cloud Clipboard";
     private string _title = "Cloud Clipboard";
-    private string _iconName = "clipboard";
+    private string _iconName = "application-clipboard";
     public List<MenuItem> _menuItems = new();
 
     private StatusNotifierItem? _item;
