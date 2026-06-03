@@ -8,7 +8,7 @@ public sealed class AgentOptions
 {
     public string OwnerId { get; set; } = string.Empty;
     public string DeviceName { get; set; } = Environment.MachineName;
-    public string ApiBaseUrl { get; set; } = "http://localhost:7071/api";
+    public string ApiBaseUrl { get; set; } = string.Empty;
     public string? FunctionKey { get; set; }
     public int PollIntervalSeconds { get; set; } = 3;
     public int HistoryLength { get; set; } = 20;

@@ -1227,9 +1227,16 @@ public sealed class ProvisionBackendDialog : Form
             }
         }
 
-        base.Dispose(disposing);
-    }
+        }
 }
+
+#else
+
+    class ProvisionBackendDialog
+    {
+        // Stub for non-Windows platforms
+    }
+#endif
 
 public sealed record ProvisionBackendDialogOptions(
     string OwnerId,
@@ -1242,9 +1249,3 @@ public sealed record ProvisionBackendDialogDependencies(
     IAzureCliMetadataProvider MetadataProvider,
     IBackendProvisioningService ProvisioningService,
     IAppIconProvider IconProvider);
-#else
-    class ProvisionBackendDialog
-    {
-        // Stub for non-Windows platforms
-    }
-#endif
