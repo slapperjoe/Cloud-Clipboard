@@ -278,22 +278,29 @@ public sealed class BackendProvisioningService : IBackendProvisioningService
     private async Task<string?> EnsureLoginAsync(string azPath, string subscriptionId, IProgress<ProvisioningProgressUpdate>? progress, CancellationToken cancellationToken)
     {
         var streamLogger = CreateStreamLogger(progress);
+
         var accountArgs = BuildSubscriptionAwareArgs("account show", subscriptionId);
         var accountResult = await RunAzAsync(azPath, accountArgs, cancellationToken, streamLogger: streamLogger).ConfigureAwait(false);
         if (accountResult.ExitCode != 0)
         {
-            _logger.LogInformation("Azure CLI login required. Starting device login flow...");
-            var loginResult = await RunAzAsync(azPath, "login --use-device-code --output none", cancellationToken, streamLogger: streamLogger).ConfigureAwait(false);
-            if (loginResult.ExitCode != 0)
+            // Already authenticated via the GUI flow — resolve the active subscription.
+            if (string.IsNullOrWhiteSpace(subscriptionId))
             {
-                return null;
+                _logger.LogWarning("az account show failed (exit {Code}). Using active subscription.", accountResult.ExitCode);
+                var plainResult = await RunAzAsync(azPath, "account show --output json", cancellationToken, streamLogger: null).ConfigureAwait(false);
+                if (plainResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(plainResult.StandardOutput))
+                {
+                    try
+                    {
+                        var doc = JsonDocument.Parse(plainResult.StandardOutput);
+                        var subId = doc.RootElement.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                        if (!string.IsNullOrWhiteSpace(subId))
+                            return subId;
+                    }
+                    catch { }
+                }
             }
-
-            accountResult = await RunAzAsync(azPath, accountArgs, cancellationToken, streamLogger: streamLogger).ConfigureAwait(false);
-            if (accountResult.ExitCode != 0)
-            {
-                return null;
-            }
+            return null;
         }
 
         if (!string.IsNullOrWhiteSpace(subscriptionId))

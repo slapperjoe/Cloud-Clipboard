@@ -1597,7 +1597,7 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
 
         private void OnTrayItemActivated(string itemName)
         {
-            _logger.LogInformation("Tray menu item activated: {ItemName}", itemName);
+            _logger.LogInformation("Tray item activated: {ItemName}", itemName);
 
             try
             {
@@ -1605,6 +1605,13 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
                 {
                     case "paste":
                         HandlePaste();
+                        break;
+                    case "Activate":
+                        HandleActivate();
+                        break;
+                    case "SecondaryActivate":
+                    case "ContextMenu":
+                        HandleContext();
                         break;
                     case "manual_upload":
                         HandleManualUpload();
@@ -1636,12 +1643,65 @@ public sealed class TrayIconHostedService : BackgroundService, IDisposable
             }
         }
 
+        private void HandleActivate()
+        {
+            var snapshot = _historyCache.Snapshot;
+            if (snapshot.Count > 0)
+            {
+                var item = snapshot[0];
+                var settings = _settingsStore.Load();
+                var ownerId = settings?.OwnerId;
+                if (string.IsNullOrEmpty(ownerId)) return;
+
+                _ = DownloadAndPasteAsync(ownerId, item.Id);
+            }
+            else
+            {
+                _logger.LogInformation("Left-click: no clipboard items to paste");
+            }
+        }
+
+        private async Task DownloadAndPasteAsync(string ownerId, string itemId)
+        {
+            try
+            {
+                _logger.LogInformation("Downloading item {ItemId} for paste...", itemId);
+                var fullItem = await _client.DownloadAsync(ownerId, itemId);
+                if (fullItem is not null && !string.IsNullOrEmpty(fullItem.ContentBase64))
+                {
+                    await _pasteService.PasteAsync(fullItem);
+                    _logger.LogInformation("Pasted item {ItemId} to clipboard", itemId);
+                }
+                else
+                {
+                    _logger.LogWarning("Item {ItemId} download returned no content", itemId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to download/paste item {ItemId}", itemId);
+            }
+        }
+
+        private void HandleContext()
+        {
+            var settingsPath = AgentSettingsPathProvider.GetSettingsPath();
+            var settings = _settingsStore.Load();
+            var owner = settings?.OwnerId ?? "not configured";
+            _trayIcon.SetTooltip($"Cloud Clipboard - {owner}\nSettings: {settingsPath}");
+            _logger.LogInformation("Right-click: owner={Owner}, settings={Path}", owner, settingsPath);
+        }
+
         private void HandlePaste()
         {
             var snapshot = _historyCache.Snapshot;
             if (snapshot.Count > 0)
             {
-                _ = _pasteService.PasteAsync(snapshot[0]);
+                var item = snapshot[0];
+                var settings = _settingsStore.Load();
+                var ownerId = settings?.OwnerId;
+                if (string.IsNullOrEmpty(ownerId)) return;
+                _ = DownloadAndPasteAsync(ownerId, item.Id);
             }
         }
 

@@ -85,4 +85,9 @@ public sealed class JsonAgentSettingsStore : IAgentSettingsStore
         var json = JsonSerializer.Serialize(payload, WriteOptions);
         File.WriteAllText(path, json);
     }
+
+    public static void WriteDefaults(string path, AgentOptions options)
+    {
+        WriteSettingsFile(path, options);
+    }
 }

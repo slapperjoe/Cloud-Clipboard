@@ -82,13 +82,34 @@ internal static class AzureCliLocator
 
     private static string[] GetDefaultInstallDirectories()
     {
-        return new[]
+        var directories = new System.Collections.Generic.List<string>();
+
+        // Windows install locations
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        foreach (var basePath in new[] { programFilesX86, programFiles })
+        {
+            if (!string.IsNullOrWhiteSpace(basePath))
             {
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)
+                directories.Add(Path.Combine(basePath, "Microsoft SDKs", "Azure", "CLI2", "wbin"));
             }
+        }
+
+        // Linux / macOS install locations
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(home))
+        {
+            directories.Add(Path.Combine(home, ".local", "bin"));
+            directories.Add(Path.Combine(home, ".azure-cli", "bin"));
+            directories.Add(Path.Combine(home, "bin"));
+            directories.Add(Path.Combine(home, "lib", "azure-cli", "bin"));
+        }
+
+        directories.Add("/usr/local/bin");
+        directories.Add("/usr/bin");
+
+        return directories
             .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => Path.Combine(path!, "Microsoft SDKs", "Azure", "CLI2", "wbin"))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }

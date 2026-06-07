@@ -1,11 +1,11 @@
-<Project Sdk="Microsoft.NET.Sdk.Worker">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-CloudClipboard.Agent-1ebb56b3-701a-4bda-a059-8fdfa111bf99</UserSecretsId>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <InvariantGlobalization>true</InvariantGlobalization>
     <UseWindowsForms Condition="'$(OS)' == 'Windows_NT'">true</UseWindowsForms>
     <UseWindowsForms Condition="'$(OS)' != 'Windows_NT'">false</UseWindowsForms>
@@ -21,11 +21,12 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
     <PackageReference Include="Azure.Messaging.WebPubSub.Client" Version="1.0.0" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.8" />
-    <PackageReference Include="Tmds.DBus" Version="0.93.0" />
     <PackageReference Include="Avalonia" Version="11.2.3" />
     <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
     <PackageReference Include="Avalonia.Themes.Simple" Version="11.2.3" />
     <PackageReference Include="Avalonia.X11" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Skia" Version="11.2.3" />
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.20.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,9 +34,7 @@
   </ItemGroup>
 
   <Target Name="BuildFunctionsZip" BeforeTargets="GetCopyToOutputDirectoryItems" Condition="'$(BuildingSolutionFile)' != 'true'">
-    <MSBuild Projects="@(FunctionsZipSourceProject)"
-             Targets="Build"
-             Properties="Configuration=$(Configuration)" />
+    <MSBuild Projects="@(FunctionsZipSourceProject)" Targets="Build" Properties="Configuration=$(Configuration)" />
   </Target>
 
   <ItemGroup>
@@ -56,9 +55,7 @@
     </Content>
   </ItemGroup>
 
-  <Target Name="IncrementVersionOnBuild"
-          BeforeTargets="GenerateAssemblyInfo"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(RunIncrementVersionOnBuild)' != 'false'">
+  <Target Name="IncrementVersionOnBuild" BeforeTargets="GenerateAssemblyInfo" Condition="'$(DesignTimeBuild)' != 'true' and '$(RunIncrementVersionOnBuild)' != 'false'">
     <PropertyGroup>
       <_VersionFile>$(RepositoryRoot)build/Version.props</_VersionFile>
       <_VersionToolProject>$(RepositoryRoot)build/Versioning/VersionIncrementer.csproj</_VersionToolProject>
@@ -67,11 +64,9 @@
     <Error Condition="!Exists('$(_VersionFile)')" Text="Version file '$(_VersionFile)' does not exist." />
     <Error Condition="!Exists('$(_VersionToolProject)')" Text="Version incrementer project '$(_VersionToolProject)' does not exist." />
 
-    <Exec Command="dotnet run --project &quot;$(_VersionToolProject)&quot; --configuration Release -- &quot;$(_VersionFile)&quot; CloudClipboardVersion"
-          IgnoreExitCode="false" />
+    <Exec Command="dotnet run --project &quot;$(_VersionToolProject)&quot; --configuration Release -- &quot;$(_VersionFile)&quot; CloudClipboardVersion" IgnoreExitCode="false" />
 
-    <XmlPeek XmlInputPath="$(_VersionFile)"
-             Query="/Project/PropertyGroup/CloudClipboardVersion">
+    <XmlPeek XmlInputPath="$(_VersionFile)" Query="/Project/PropertyGroup/CloudClipboardVersion">
       <Output TaskParameter="Result" PropertyName="_UpdatedVersion" />
     </XmlPeek>
 

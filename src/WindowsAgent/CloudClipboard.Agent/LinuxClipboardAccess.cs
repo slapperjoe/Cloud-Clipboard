@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using CloudClipboard.Agent;
+using Microsoft.Extensions.Logging;
 
 namespace CloudClipboard.Agent.Services;
 
@@ -145,10 +146,16 @@ public sealed class LinuxClipboardAccess : IClipboardAccess
                 UseShellExecute = false,
             };
             using var process = Process.Start(psi);
+            if (process is null)
+            {
+                _logger.LogDebug("Failed to start process: {Command}", command);
+                return;
+            }
+
             if (args.Length > 0)
             {
                 var text = args[args.Length - 1];
-                process!.StandardInput.WriteLine(text);
+                process.StandardInput.WriteLine(text);
             }
             process.WaitForExit();
         }

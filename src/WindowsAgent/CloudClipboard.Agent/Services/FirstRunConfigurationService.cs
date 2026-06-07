@@ -354,12 +354,12 @@ public sealed class FirstRunConfigurationService : BackgroundService
 
         private async Task<BackendProvisioningResult?> RunAvaloniaProvisioningDialogAsync(
             string ownerId,
-            string subscriptionId,
+            string? subscriptionId,
             CancellationToken cancellationToken)
         {
             IReadOnlyList<AzureSubscriptionInfo> subscriptions = Array.Empty<AzureSubscriptionInfo>();
             IReadOnlyList<AzureLocationInfo> locations = Array.Empty<AzureLocationInfo>();
-            string initialSubscriptionId = subscriptionId;
+            string? initialSubscriptionId = subscriptionId;
 
             try
             {

@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,7 +20,6 @@ public sealed class AvaloniaProvisionDialog
     private static ProgressBar? _progressBar;
     private static TextBlock? _errorLabel;
     private static Button? _provisionBtn;
-    private static Window? _window;
 
     public static Task<BackendProvisioningResult?> ShowAsync(
         ProvisionBackendDialogOptions options,
@@ -30,19 +30,14 @@ public sealed class AvaloniaProvisionDialog
         var progress = new Progress<ProvisioningProgressUpdate>();
         progress.ProgressChanged += (s, e) =>
         {
-            UpdateProgress(e);
+            Dispatcher.UIThread.InvokeAsync(() => UpdateProgress(e));
         };
 
-        AppBuilder.Configure<Application>()
-            .UseX11()
-            .Start((app, args) =>
-            {
-                _window = CreateWindow(options, dependencies, tcs, progress, cancellationToken);
-                _window.Show();
-                _window.Activate();
-                _window.Focus();
-                app.Run(_window);
-            }, Array.Empty<string>());
+        Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            var content = CreateContent(options, dependencies, tcs, progress, cancellationToken);
+            App.ShowContent(content, 720, 600);
+        });
 
         return tcs.Task;
     }
@@ -59,20 +54,13 @@ public sealed class AvaloniaProvisionDialog
         }
     }
 
-    private static Window CreateWindow(
+    private static Control CreateContent(
         ProvisionBackendDialogOptions options,
         ProvisionBackendDialogDependencies dependencies,
         TaskCompletionSource<BackendProvisioningResult?> tcs,
         IProgress<ProvisioningProgressUpdate> progress,
         CancellationToken cancellationToken)
     {
-        var window = new Window
-        {
-            Title = "Cloud Clipboard - Azure Provisioning",
-            Width = 720,
-            Height = 600,
-        };
-
         var root = new StackPanel
         {
             Margin = new Thickness(24),
@@ -179,8 +167,6 @@ public sealed class AvaloniaProvisionDialog
         root.Children.Add(_errorLabel);
         root.Children.Add(buttonPanel);
 
-        window.Content = root;
-
         // Wire up events
         subscriptionCombo.SelectionChanged += (s, e) =>
         {
@@ -200,19 +186,11 @@ public sealed class AvaloniaProvisionDialog
         cancelBtn.Click += (s, e) =>
         {
             tcs.TrySetResult(null);
-            window.Close();
-        };
-
-        window.Closed += (s, e) =>
-        {
-            if (!tcs.Task.IsCompleted)
-            {
-                tcs.TrySetResult(null);
-            }
+            App.HideContent();
         };
 
         UpdateNames();
-        return window;
+        return root;
 
         void UpdateNames()
         {
@@ -234,8 +212,8 @@ public sealed class AvaloniaProvisionDialog
             var selectedIndex = subscriptionCombo.SelectedIndex;
             if (selectedIndex >= 0)
             {
-                var subLabel = subscriptionCombo.SelectedItem?.ToString() ?? "";
-                var locations = await metadataProvider.GetLocationsAsync(subLabel, cancellationToken);
+                var subId = (subscriptionCombo.SelectedItem as AzureSubscriptionInfo)?.Id ?? "";
+                var locations = await metadataProvider.GetLocationsAsync(subId, cancellationToken);
                 locationCombo.ItemsSource = locations.Select(l => l.Name).ToList();
                 if (locations.Count > 0)
                 {
@@ -262,7 +240,7 @@ public sealed class AvaloniaProvisionDialog
     {
         try
         {
-            var subscriptionId = subscriptionCombo.SelectedItem?.ToString();
+            var subscriptionId = (subscriptionCombo.SelectedItem as AzureSubscriptionInfo)?.Id;
             var location = locationCombo.SelectedItem?.ToString();
 
             var deployment = new FunctionsDeploymentOptions
@@ -284,7 +262,7 @@ public sealed class AvaloniaProvisionDialog
             if (result.Succeeded)
             {
                 tcs.TrySetResult(result);
-                _window?.Close();
+                App.HideContent();
             }
             else
             {
@@ -307,9 +285,9 @@ public sealed class AvaloniaProvisionDialog
         }
     }
 
-    private static List<string> OptionsToSubscriptionList(ProvisionBackendDialogOptions options)
+    private static List<AzureSubscriptionInfo> OptionsToSubscriptionList(ProvisionBackendDialogOptions options)
     {
-        return options.Subscriptions.Select(s => s.Label).ToList();
+        return options.Subscriptions.ToList();
     }
 
     private static List<string> OptionsToLocationList(ProvisionBackendDialogOptions options)
